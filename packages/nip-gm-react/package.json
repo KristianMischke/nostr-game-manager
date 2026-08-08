@@ -1,0 +1,37 @@
+{
+  "name": "nip-gm-react",
+  "version": "0.0.0",
+  "description": "React bindings for NIP-GM: a provider carrying the client, and hooks bridging session stores through useSyncExternalStore.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "nip-gm-client": "workspace:*",
+    "nip-gm-core": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.0",
+    "react": "^18.3.1",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}

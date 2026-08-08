@@ -1,0 +1,22 @@
+{
+  "name": "nostr-game-manager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "NIP-GM: turn-based games over Nostr. Portable protocol core, player client, GM daemon, and framework bindings.",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "lint": "eslint ."
+  },
+  "license": "MIT",
+  "packageManager": "pnpm@9.0.0",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.6.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.62.1"
+  }
+}

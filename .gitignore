@@ -1,0 +1,10 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+
+# GM keys must never be committed — see packages/nip-gm-gm.
+*.nsec
+.env
+.env.*
+!.env.example

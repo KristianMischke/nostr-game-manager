@@ -1,0 +1,33 @@
+{
+  "name": "nip-gm-gm",
+  "version": "0.0.0",
+  "description": "NIP-GM Game Master runtime: lobby lifecycle, round collection and resolution, timeouts as system inputs, snapshots, key reveals, crash recovery. Library first, CLI second.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "_bin_pending": "Restore `\"bin\": { \"nip-gm\": \"./dist/bin/gm.js\" }` when milestone 5 adds src/bin/gm.ts.",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --passWithNoTests",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "nip-gm-core": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}
