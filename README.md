@@ -5,7 +5,11 @@ games over Nostr, with a Game Master client executing game logic, players
 submitting signed moves, and anyone able to spectate or audit.
 
 > Status: early. The protocol spec is a `draft` with open questions; the code is
-> at milestone 1 of 8. Nothing is published yet.
+> at milestone 2 of 8 — the event codec and its vector corpus are in place;
+> crypto, sessions and the GM runner are not. Nothing is published yet.
+
+Porting existing game logic into a module? See
+[docs/porting-game-logic.md](docs/porting-game-logic.md).
 
 ## Packages
 

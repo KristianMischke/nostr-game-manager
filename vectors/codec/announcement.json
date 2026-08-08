@@ -1,0 +1,109 @@
+{
+  "codec": "announcement",
+  "cases": [
+    {
+      "name": "spec example: full announcement",
+      "event": {
+        "kind": 32600,
+        "tags": [
+          ["d", "com.example.holdem"],
+          ["version", "1.2.0"],
+          ["rules_hash", "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"],
+          ["relays", "wss://relay1.example", "wss://relay2.example"],
+          ["modes", "verified", "casual"]
+        ],
+        "content": "{\"name\":\"Ace GM\",\"about\":\"Hosted hold'em since 2026.\",\"icon\":\"https://example.com/gm.png\",\"max_concurrent_games\":50,\"capabilities\":[\"create\",\"hot-join\",\"spectate\",\"hidden-info\",\"rng\"]}"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "game": "com.example.holdem",
+          "version": "1.2.0",
+          "rulesHash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+          "relays": ["wss://relay1.example", "wss://relay2.example"],
+          "modes": ["verified", "casual"],
+          "config": {
+            "name": "Ace GM",
+            "about": "Hosted hold'em since 2026.",
+            "icon": "https://example.com/gm.png",
+            "maxConcurrentGames": 50,
+            "capabilities": ["create", "hot-join", "spectate", "hidden-info", "rng"]
+          }
+        }
+      }
+    },
+    {
+      "name": "minimal announcement; absent modes means verified, not none",
+      "event": {
+        "kind": 32600,
+        "tags": [
+          ["d", "net.example.chess"],
+          ["version", "0.1.0"]
+        ],
+        "content": "{\"name\":\"Tiny GM\"}"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "game": "net.example.chess",
+          "version": "0.1.0",
+          "relays": [],
+          "modes": ["verified"],
+          "config": { "name": "Tiny GM", "capabilities": [] }
+        }
+      }
+    },
+    {
+      "name": "relay list is one multi-value tag, not one tag per relay",
+      "event": {
+        "kind": 32600,
+        "tags": [
+          ["d", "g"],
+          ["version", "1"],
+          ["relays", "wss://a", "wss://b", "wss://c"]
+        ],
+        "content": "{\"name\":\"n\"}"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "game": "g",
+          "version": "1",
+          "relays": ["wss://a", "wss://b", "wss://c"],
+          "modes": ["verified"],
+          "config": { "name": "n", "capabilities": [] }
+        }
+      }
+    },
+    {
+      "name": "reject: wrong kind",
+      "event": { "kind": 1, "tags": [["d", "g"], ["version", "1"]], "content": "{\"name\":\"n\"}" },
+      "expect": { "ok": false, "error": "wrong_kind" }
+    },
+    {
+      "name": "reject: no d tag",
+      "event": { "kind": 32600, "tags": [["version", "1"]], "content": "{\"name\":\"n\"}" },
+      "expect": { "ok": false, "error": "missing_d" }
+    },
+    {
+      "name": "reject: no version tag",
+      "event": { "kind": 32600, "tags": [["d", "g"]], "content": "{\"name\":\"n\"}" },
+      "expect": { "ok": false, "error": "missing_version" }
+    },
+    {
+      "name": "reject: malformed content json",
+      "event": { "kind": 32600, "tags": [["d", "g"], ["version", "1"]], "content": "{oops" },
+      "expect": { "ok": false, "error": "malformed_json" }
+    },
+    {
+      "name": "reject: content is an array",
+      "event": { "kind": 32600, "tags": [["d", "g"], ["version", "1"]], "content": "[]" },
+      "expect": { "ok": false, "error": "not_an_object" }
+    },
+    {
+      "name": "reject: no name in config",
+      "event": { "kind": 32600, "tags": [["d", "g"], ["version", "1"]], "content": "{}" },
+      "expect": { "ok": false, "error": "missing_name" }
+    }
+  ]
+}

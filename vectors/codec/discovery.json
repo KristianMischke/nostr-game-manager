@@ -1,0 +1,91 @@
+{
+  "codec": "discovery",
+  "cases": [
+    {
+      "name": "spec example: player request",
+      "event": {
+        "kind": 21602,
+        "tags": [["game", "com.example.holdem"], ["version", "1.2.0"]],
+        "content": ""
+      },
+      "expect": {
+        "ok": true,
+        "value": { "type": "request", "game": "com.example.holdem", "version": "1.2.0" }
+      }
+    },
+    {
+      "name": "spec example: GM offer, distinguished by its e tag",
+      "event": {
+        "kind": 21602,
+        "tags": [
+          ["e", "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"],
+          ["p", "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411"],
+          ["a", "32600:3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d:com.example.holdem"],
+          ["capacity", "12"]
+        ],
+        "content": ""
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "type": "offer",
+          "requestId": "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069",
+          "player": "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411",
+          "announcement": {
+            "kind": 32600,
+            "pubkey": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
+            "identifier": "com.example.holdem"
+          },
+          "capacity": 12
+        }
+      }
+    },
+    {
+      "name": "capacity 0 means full, and must not be confused with absent",
+      "event": {
+        "kind": 21602,
+        "tags": [
+          ["e", "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"],
+          ["p", "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411"],
+          ["a", "32600:3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d:g"],
+          ["capacity", "0"]
+        ],
+        "content": ""
+      },
+      "expectSubset": { "type": "offer", "capacity": 0 }
+    },
+    {
+      "name": "reject: offer whose a tag points at a lobby rather than an announcement",
+      "event": {
+        "kind": 21602,
+        "tags": [
+          ["e", "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"],
+          ["p", "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411"],
+          ["a", "32601:3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d:l"],
+          ["capacity", "1"]
+        ],
+        "content": ""
+      },
+      "expect": { "ok": false, "error": "wrong_announcement_kind" }
+    },
+    {
+      "name": "reject: offer with a non-numeric capacity",
+      "event": {
+        "kind": 21602,
+        "tags": [
+          ["e", "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"],
+          ["p", "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411"],
+          ["a", "32600:3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d:g"],
+          ["capacity", "lots"]
+        ],
+        "content": ""
+      },
+      "expect": { "ok": false, "error": "bad_capacity" }
+    },
+    {
+      "name": "reject: request with no game tag",
+      "event": { "kind": 21602, "tags": [["version", "1.0.0"]], "content": "" },
+      "expect": { "ok": false, "error": "missing_game" }
+    }
+  ]
+}

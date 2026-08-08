@@ -1,0 +1,188 @@
+{
+  "codec": "state",
+  "cases": [
+    {
+      "name": "start event; p tag order is seat order and must not be sorted",
+      "event": {
+        "kind": 2601,
+        "tags": [
+          ["state", "start"],
+          ["a", "32601:3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d:friday-poker"],
+          ["p", "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf"],
+          ["p", "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"],
+          ["p", "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411"],
+          ["game", "com.example.holdem"],
+          ["version", "1.2.0"]
+        ],
+        "content": "{\"rules_hash\":\"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08\",\"config\":{\"blinds\":[1,2]},\"seed_commit\":\"2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae\"}"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "type": "start",
+          "lobby": {
+            "kind": 32601,
+            "pubkey": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
+            "identifier": "friday-poker"
+          },
+          "seats": [
+            "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+            "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
+            "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411"
+          ],
+          "game": "com.example.holdem",
+          "version": "1.2.0",
+          "content": {
+            "rulesHash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+            "config": { "blinds": [1, 2] },
+            "seedCommit": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+          }
+        }
+      }
+    },
+    {
+      "name": "delta citing bare move ids, for a public-move game",
+      "event": {
+        "kind": 2601,
+        "tags": [
+          ["state", "delta"],
+          ["e", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36", "", "root"],
+          ["seq", "13"],
+          ["p", "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411"]
+        ],
+        "content": "{\"seq\":13,\"applied\":[\"7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069\"],\"patch\":{\"pot\":40},\"system\":null}"
+      },
+      "expectSubset": {
+        "type": "delta",
+        "seq": 13,
+        "awaiting": ["e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411"]
+      },
+      "expectApplied": [
+        { "id": "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069" }
+      ]
+    },
+    {
+      "name": "round-closing delta with per-move plaintext and revealed conversation keys",
+      "event": {
+        "kind": 2601,
+        "tags": [
+          ["state", "delta"],
+          ["e", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36", "", "root"],
+          ["seq", "14"],
+          ["p", "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411"],
+          ["p", "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf"]
+        ],
+        "content": "{\"seq\":14,\"applied\":[{\"id\":\"7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069\",\"move\":{\"type\":\"bid\",\"data\":{\"amount\":40}},\"key\":\"a1b2c3\"},{\"id\":\"2e7d2c03a9507ae265ecf5b5356885a53393a2029d241394997265a1a25aefc6\",\"move\":{\"type\":\"bid\",\"data\":{\"amount\":10}},\"key\":\"d4e5f6\"}],\"patch\":{\"pot\":50},\"system\":null}"
+      },
+      "expectApplied": [
+        {
+          "id": "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069",
+          "move": { "type": "bid", "data": { "amount": 40 } },
+          "key": "a1b2c3"
+        },
+        {
+          "id": "2e7d2c03a9507ae265ecf5b5356885a53393a2029d241394997265a1a25aefc6",
+          "move": { "type": "bid", "data": { "amount": 10 } },
+          "key": "d4e5f6"
+        }
+      ]
+    },
+    {
+      "name": "private state stays ciphertext; the codec must not attempt to parse it",
+      "event": {
+        "kind": 2601,
+        "tags": [
+          ["state", "private"],
+          ["e", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36", "", "root"],
+          ["seq", "13"],
+          ["p", "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411"]
+        ],
+        "content": "AqrPTAdKDrOTDWtBWM7RXRXfHIfPeI9O5RgPULc4uT8/OiC5VbNJqhiIx+GnpRDo"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "type": "private",
+          "gameId": "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36",
+          "seq": 13,
+          "recipient": "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411",
+          "content": "AqrPTAdKDrOTDWtBWM7RXRXfHIfPeI9O5RgPULc4uT8/OiC5VbNJqhiIx+GnpRDo"
+        }
+      }
+    },
+    {
+      "name": "end event reveals seed, salt and per-move conversation keys",
+      "event": {
+        "kind": 2601,
+        "tags": [
+          ["state", "end"],
+          ["e", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36", "", "root"],
+          ["p", "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411"],
+          ["p", "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf"]
+        ],
+        "content": "{\"result\":{\"winners\":[\"e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411\"],\"scores\":{\"e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411\":120}},\"seed\":\"4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865\",\"salt\":\"53c234e5e8472b6ac51c1ae1cab3fe06fad053beb8ebfd8977b010655bfdd3c3\",\"key_reveals\":{\"7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069\":\"a1b2c3\"}}"
+      },
+      "expectSubset": { "type": "end" }
+    },
+    {
+      "name": "abort is parsed as its own lifecycle type",
+      "event": {
+        "kind": 2601,
+        "tags": [
+          ["state", "abort"],
+          ["e", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36", "", "root"]
+        ],
+        "content": "{\"reason\":\"gm_shutdown\",\"seed\":\"4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865\"}"
+      },
+      "expectSubset": { "type": "abort" }
+    },
+    {
+      "name": "reject: delta tag seq disagrees with content seq",
+      "event": {
+        "kind": 2601,
+        "tags": [
+          ["state", "delta"],
+          ["e", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36", "", "root"],
+          ["seq", "13"]
+        ],
+        "content": "{\"seq\":99,\"applied\":[],\"patch\":{},\"system\":null}"
+      },
+      "expect": { "ok": false, "error": "seq_mismatch" }
+    },
+    {
+      "name": "reject: delta with no root e tag",
+      "event": {
+        "kind": 2601,
+        "tags": [["state", "delta"], ["seq", "1"]],
+        "content": "{\"seq\":1,\"applied\":[],\"patch\":{},\"system\":null}"
+      },
+      "expect": { "ok": false, "error": "missing_root" }
+    },
+    {
+      "name": "reject: start event with no seats",
+      "event": {
+        "kind": 2601,
+        "tags": [
+          ["state", "start"],
+          ["a", "32601:3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d:l"],
+          ["game", "g"],
+          ["version", "1"]
+        ],
+        "content": "{\"config\":{}}"
+      },
+      "expect": { "ok": false, "error": "no_seats" }
+    },
+    {
+      "name": "reject: unknown state subtype",
+      "event": {
+        "kind": 2601,
+        "tags": [
+          ["state", "rewind"],
+          ["e", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36", "", "root"]
+        ],
+        "content": "{}"
+      },
+      "expect": { "ok": false, "error": "unknown_state_type" }
+    }
+  ]
+}

@@ -1,0 +1,193 @@
+{
+  "codec": "lobby",
+  "cases": [
+    {
+      "name": "spec example: open public lobby with two players",
+      "event": {
+        "kind": 32601,
+        "tags": [
+          ["d", "friday-poker"],
+          ["game", "com.example.holdem"],
+          ["version", "1.2.0"],
+          ["visibility", "public"],
+          ["join", "before"],
+          ["start", "ready"],
+          ["status", "open"],
+          ["p", "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411", "", "ready"],
+          ["p", "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf", "", "joined"],
+          ["relays", "wss://relay1.example"]
+        ],
+        "content": "{\"name\":\"Friday Poker\",\"mode\":\"verified\",\"min_players\":2,\"max_players\":6,\"turn_timeout\":60,\"timeout_action\":\"fold\",\"snapshot_interval\":10,\"spectator_delay\":30,\"config\":{\"blinds\":[1,2]}}"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "lobbyId": "friday-poker",
+          "game": "com.example.holdem",
+          "version": "1.2.0",
+          "visibility": "public",
+          "join": "before",
+          "start": { "kind": "ready" },
+          "status": "open",
+          "players": [
+            {
+              "pubkey": "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411",
+              "state": "ready"
+            },
+            {
+              "pubkey": "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+              "state": "joined"
+            }
+          ],
+          "relays": ["wss://relay1.example"],
+          "config": {
+            "name": "Friday Poker",
+            "mode": "verified",
+            "minPlayers": 2,
+            "maxPlayers": 6,
+            "turnTimeout": 60,
+            "timeoutAction": "fold",
+            "snapshotInterval": 10,
+            "spectatorDelay": 30,
+            "config": { "blinds": [1, 2] }
+          }
+        }
+      }
+    },
+    {
+      "name": "player tag order is preserved — it becomes seat order at start",
+      "event": {
+        "kind": 32601,
+        "tags": [
+          ["d", "l"],
+          ["game", "g"],
+          ["version", "1"],
+          ["visibility", "public"],
+          ["join", "before"],
+          ["start", "ready"],
+          ["status", "open"],
+          ["p", "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf", "", "joined"],
+          ["p", "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d", "", "joined"],
+          ["p", "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411", "", "joined"]
+        ],
+        "content": "{\"name\":\"n\",\"mode\":\"verified\"}"
+      },
+      "expectPlayerOrder": [
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+        "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
+        "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411"
+      ]
+    },
+    {
+      "name": "timer start condition carries its seconds",
+      "event": {
+        "kind": 32601,
+        "tags": [
+          ["d", "l"],
+          ["game", "g"],
+          ["version", "1"],
+          ["visibility", "private"],
+          ["join", "anytime"],
+          ["start", "timer:120"],
+          ["status", "starting"]
+        ],
+        "content": "{\"name\":\"n\",\"mode\":\"casual\"}"
+      },
+      "expectSubset": {
+        "start": { "kind": "timer", "seconds": 120 },
+        "visibility": "private",
+        "join": "anytime",
+        "status": "starting"
+      }
+    },
+    {
+      "name": "active lobby carries the game id in a root e tag",
+      "event": {
+        "kind": 32601,
+        "tags": [
+          ["d", "l"],
+          ["game", "g"],
+          ["version", "1"],
+          ["visibility", "public"],
+          ["join", "before"],
+          ["start", "ready"],
+          ["status", "active"],
+          ["e", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36", "", "root"]
+        ],
+        "content": "{\"name\":\"n\",\"mode\":\"verified\"}"
+      },
+      "expectSubset": {
+        "gameId": "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36",
+        "status": "active"
+      }
+    },
+    {
+      "name": "reject: leader start with no leader tag could never start",
+      "event": {
+        "kind": 32601,
+        "tags": [
+          ["d", "l"],
+          ["game", "g"],
+          ["version", "1"],
+          ["visibility", "public"],
+          ["join", "before"],
+          ["start", "leader"],
+          ["status", "open"]
+        ],
+        "content": "{\"name\":\"n\",\"mode\":\"verified\"}"
+      },
+      "expect": { "ok": false, "error": "missing_leader" }
+    },
+    {
+      "name": "reject: unknown visibility",
+      "event": {
+        "kind": 32601,
+        "tags": [
+          ["d", "l"],
+          ["game", "g"],
+          ["version", "1"],
+          ["visibility", "secret"],
+          ["join", "before"],
+          ["start", "ready"],
+          ["status", "open"]
+        ],
+        "content": "{\"name\":\"n\",\"mode\":\"verified\"}"
+      },
+      "expect": { "ok": false, "error": "bad_visibility" }
+    },
+    {
+      "name": "reject: malformed timer",
+      "event": {
+        "kind": 32601,
+        "tags": [
+          ["d", "l"],
+          ["game", "g"],
+          ["version", "1"],
+          ["visibility", "public"],
+          ["join", "before"],
+          ["start", "timer:soon"],
+          ["status", "open"]
+        ],
+        "content": "{\"name\":\"n\",\"mode\":\"verified\"}"
+      },
+      "expect": { "ok": false, "error": "bad_start" }
+    },
+    {
+      "name": "reject: unknown status",
+      "event": {
+        "kind": 32601,
+        "tags": [
+          ["d", "l"],
+          ["game", "g"],
+          ["version", "1"],
+          ["visibility", "public"],
+          ["join", "before"],
+          ["start", "ready"],
+          ["status", "paused"]
+        ],
+        "content": "{\"name\":\"n\",\"mode\":\"verified\"}"
+      },
+      "expect": { "ok": false, "error": "bad_status" }
+    }
+  ]
+}

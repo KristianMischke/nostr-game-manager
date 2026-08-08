@@ -20,12 +20,20 @@ export type Hex = string;
  */
 export type Tag = string[];
 
-export interface UnsignedEvent {
-  pubkey: Hex;
-  created_at: number;
+/**
+ * What a codec's `build*` function returns: everything about an event except
+ * the parts only a signer can supply. The caller adds `pubkey` and `created_at`
+ * and signs.
+ */
+export interface EventTemplate {
   kind: number;
   tags: Tag[];
   content: string;
+}
+
+export interface UnsignedEvent extends EventTemplate {
+  pubkey: Hex;
+  created_at: number;
 }
 
 export interface NostrEvent extends UnsignedEvent {
@@ -54,4 +62,22 @@ export interface AddressPointer {
   kind: number;
   pubkey: Hex;
   identifier: string;
+}
+
+/**
+ * Parse outcome.
+ *
+ * Everything arriving from a relay is untrusted, so codecs never throw on bad
+ * input and never return a half-built value — a malformed event is a normal
+ * occurrence, not an exception. `error` is a short stable code so that ports in
+ * other languages can agree on rejections (see `vectors/codec`).
+ */
+export type ParseResult<T> = { ok: true; value: T } | { ok: false; error: string };
+
+export function ok<T>(value: T): ParseResult<T> {
+  return { ok: true, value };
+}
+
+export function fail<T = never>(error: string): ParseResult<T> {
+  return { ok: false, error };
 }

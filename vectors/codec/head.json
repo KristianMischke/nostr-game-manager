@@ -1,0 +1,80 @@
+{
+  "codec": "head",
+  "cases": [
+    {
+      "name": "head snapshot at seq 42",
+      "event": {
+        "kind": 32602,
+        "tags": [
+          ["d", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36"],
+          ["e", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36", "", "root"],
+          ["seq", "42"],
+          ["game", "com.example.holdem"],
+          ["version", "1.2.0"]
+        ],
+        "content": "{\"seq\":42,\"state\":{\"pot\":120,\"turn\":3}}"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "gameId": "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36",
+          "seq": 42,
+          "game": "com.example.holdem",
+          "version": "1.2.0",
+          "state": { "pot": 120, "turn": 3 }
+        }
+      }
+    },
+    {
+      "name": "a null state is a real snapshot value, not a missing field",
+      "event": {
+        "kind": 32602,
+        "tags": [
+          ["d", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36"],
+          ["seq", "0"],
+          ["game", "g"],
+          ["version", "1"]
+        ],
+        "content": "{\"seq\":0,\"state\":null}"
+      },
+      "expectSubset": { "seq": 0, "state": null }
+    },
+    {
+      "name": "reject: d tag is not a hex game id",
+      "event": {
+        "kind": 32602,
+        "tags": [["d", "friday-poker"], ["seq", "1"], ["game", "g"], ["version", "1"]],
+        "content": "{\"seq\":1,\"state\":{}}"
+      },
+      "expect": { "ok": false, "error": "bad_d" }
+    },
+    {
+      "name": "reject: tag seq disagrees with content seq",
+      "event": {
+        "kind": 32602,
+        "tags": [
+          ["d", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36"],
+          ["seq", "5"],
+          ["game", "g"],
+          ["version", "1"]
+        ],
+        "content": "{\"seq\":9,\"state\":{}}"
+      },
+      "expect": { "ok": false, "error": "seq_mismatch" }
+    },
+    {
+      "name": "reject: no state field",
+      "event": {
+        "kind": 32602,
+        "tags": [
+          ["d", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36"],
+          ["seq", "1"],
+          ["game", "g"],
+          ["version", "1"]
+        ],
+        "content": "{\"seq\":1}"
+      },
+      "expect": { "ok": false, "error": "missing_state" }
+    }
+  ]
+}

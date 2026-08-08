@@ -1,0 +1,165 @@
+{
+  "codec": "message",
+  "cases": [
+    {
+      "name": "spec example: move against a game root",
+      "event": {
+        "kind": 2600,
+        "tags": [
+          ["action", "move"],
+          ["e", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36", "", "root"],
+          ["p", "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"]
+        ],
+        "content": "{\"seq\":12,\"prev\":\"7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069\",\"type\":\"raise\",\"data\":{\"amount\":40}}"
+      },
+      "expect": {
+        "ok": true,
+        "value": {
+          "action": "move",
+          "gameId": "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36",
+          "recipient": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
+          "content": "{\"seq\":12,\"prev\":\"7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069\",\"type\":\"raise\",\"data\":{\"amount\":40}}"
+        }
+      }
+    },
+    {
+      "name": "hidden move carries the per-round ephemeral pubkey",
+      "event": {
+        "kind": 2600,
+        "tags": [
+          ["action", "move"],
+          ["e", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36", "", "root"],
+          ["p", "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"],
+          ["ephemeral", "2e7d2c03a9507ae265ecf5b5356885a53393a2029d241394997265a1a25aefc6"]
+        ],
+        "content": "AqrPTAdKDrOTDWtBWM7RXRXfHIfPeI9O5RgPULc4uT8"
+      },
+      "expectSubset": {
+        "action": "move",
+        "ephemeral": "2e7d2c03a9507ae265ecf5b5356885a53393a2029d241394997265a1a25aefc6"
+      }
+    },
+    {
+      "name": "join addressed to a lobby",
+      "event": {
+        "kind": 2600,
+        "tags": [
+          ["action", "join"],
+          ["a", "32601:3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d:friday-poker"],
+          ["p", "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"]
+        ],
+        "content": ""
+      },
+      "expectSubset": { "action": "join" }
+    },
+    {
+      "name": "leader ready message carrying the start intent",
+      "event": {
+        "kind": 2600,
+        "tags": [
+          ["action", "ready"],
+          ["a", "32601:3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d:l"],
+          ["p", "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"],
+          ["intent", "start"]
+        ],
+        "content": ""
+      },
+      "expectSubset": { "action": "ready", "intent": "start" }
+    },
+    {
+      "name": "create addressed to a GM announcement",
+      "event": {
+        "kind": 2600,
+        "tags": [
+          ["action", "create"],
+          ["a", "32600:3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d:com.example.holdem"],
+          ["p", "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"]
+        ],
+        "content": "AqrPTAdKDrOTDWtBWM7RXQ"
+      },
+      "expectSubset": { "action": "create" }
+    },
+    {
+      "name": "response separates the answered message from the game root",
+      "event": {
+        "kind": 2600,
+        "tags": [
+          ["action", "response"],
+          ["e", "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069"],
+          ["p", "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411"],
+          ["e", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36", "", "root"]
+        ],
+        "content": "{\"status\":\"rejected\",\"reason\":\"not_your_turn\"}"
+      },
+      "expectSubset": {
+        "action": "response",
+        "target": "7f83b1657ff1fc53b92dc18148a1d65dfc2d4b1fa3d677284addd200126d9069",
+        "gameId": "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36",
+        "recipient": "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411"
+      }
+    },
+    {
+      "name": "ephemeral mirror kind parses identically",
+      "event": {
+        "kind": 21600,
+        "tags": [
+          ["action", "move"],
+          ["e", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36", "", "root"],
+          ["p", "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"]
+        ],
+        "content": "{}"
+      },
+      "expectSubset": { "action": "move" }
+    },
+    {
+      "name": "reject: unknown action is not silently ignored",
+      "event": {
+        "kind": 2600,
+        "tags": [
+          ["action", "teleport"],
+          ["p", "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"]
+        ],
+        "content": ""
+      },
+      "expect": { "ok": false, "error": "unknown_action" }
+    },
+    {
+      "name": "reject: move with no root e tag",
+      "event": {
+        "kind": 2600,
+        "tags": [
+          ["action", "move"],
+          ["p", "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"]
+        ],
+        "content": "{}"
+      },
+      "expect": { "ok": false, "error": "missing_root" }
+    },
+    {
+      "name": "reject: join whose a tag points at an announcement, not a lobby",
+      "event": {
+        "kind": 2600,
+        "tags": [
+          ["action", "join"],
+          ["a", "32600:3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d:g"],
+          ["p", "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"]
+        ],
+        "content": ""
+      },
+      "expect": { "ok": false, "error": "wrong_lobby_kind" }
+    },
+    {
+      "name": "reject: bech32 npub in a p tag (NIP-GM requires hex)",
+      "event": {
+        "kind": 2600,
+        "tags": [
+          ["action", "move"],
+          ["e", "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36", "", "root"],
+          ["p", "npub180cvv07tjdrrgpa0j7j7tmnyl2yr6yr7l8j4s3evf6u64th6gkwsyjh6w6"]
+        ],
+        "content": "{}"
+      },
+      "expect": { "ok": false, "error": "bad_recipient" }
+    }
+  ]
+}
