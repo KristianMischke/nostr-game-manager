@@ -21,19 +21,37 @@ import {
   generateEphemeralKeypair,
   KIND,
   playerConversationKey,
+  seedCommit,
+  selectRevisions,
+  supersededRevisions,
   type AppliedMove,
   type GameModule,
   type Hex,
   type NostrEvent,
   type ResolvedMove,
+  type RevisionCandidate,
   type SystemInput,
 } from 'nip-gm-core';
 import { bytesToHex } from '@noble/hashes/utils';
 import type { MemorySigner } from './memory-signer.js';
 
-/** What a player does in one round; `undefined` means they did not submit. */
+/** One player's participation in a round. */
+export interface ScriptedSubmission<Move> {
+  player: MemorySigner;
+  /** The move that should end up applied — the highest revision. */
+  move: Move;
+  wire: { type: string; data: unknown };
+  /**
+   * Earlier revisions this player published and then replaced, oldest first
+   * (NIP-GM §Move revisions). They take revisions 0..n-1 and `wire` takes n, so
+   * a submission without drafts is an ordinary single-shot move at rev 0.
+   */
+  drafts?: { type: string; data: unknown }[];
+}
+
+/** What a player does in one round; omission means they did not submit. */
 export interface ScriptedRound<Move> {
-  moves: { player: MemorySigner; move: Move; wire: { type: string; data: unknown } }[];
+  moves: ScriptedSubmission<Move>[];
   system?: SystemInput | null;
   now?: number;
 }
@@ -43,8 +61,23 @@ export interface HarnessOptions<Config, Move> {
   players: MemorySigner[];
   config: Config;
   rounds: ScriptedRound<Move>[];
-  /** Fixed so logs are byte-reproducible across runs. */
+  /**
+   * Pin the start event's timestamp. Together with {@link HarnessOptions.seed}
+   * this fixes the game id across runs.
+   *
+   * It does *not* make the whole log reproducible: every move draws a fresh
+   * ephemeral keypair and NIP-44 chooses a random nonce, so ciphertexts and
+   * therefore move event ids differ per run — and under an id-sensitive
+   * resolution order, so does the final state. Two runs are self-consistent
+   * games, not the same game.
+   */
   startedAt?: number;
+  /**
+   * Fixed GM seed and salt. Without these the commitment is freshly random per
+   * run, so the derived randomness differs even when everything else matches.
+   */
+  seed?: Uint8Array;
+  salt?: Uint8Array;
 }
 
 export interface GameTranscript<State> {
@@ -67,7 +100,14 @@ export async function runScriptedGame<Config, State, Move, Patch>(
   const startedAt = options.startedAt ?? 1_700_000_000;
   const seats = players.map((p) => p.pubkey);
 
-  const commitment = createSeedCommitment();
+  const commitment =
+    options.seed && options.salt
+      ? {
+          seed: options.seed,
+          salt: options.salt,
+          commit: seedCommit(options.seed, options.salt),
+        }
+      : createSeedCommitment();
 
   const start = await gm.signEvent({
     ...buildStart({
@@ -86,6 +126,8 @@ export async function runScriptedGame<Config, State, Move, Patch>(
 
   const moveEvents: NostrEvent[] = [];
   const stateEvents: NostrEvent[] = [];
+  /** Move event id → hex conversation key, for the round-closing reveal. */
+  const keyOf = new Map<Hex, string>();
 
   for (const [index, round] of options.rounds.entries()) {
     if (engine.isOver) break;
@@ -96,29 +138,80 @@ export async function runScriptedGame<Config, State, Move, Patch>(
 
     // --- players commit hidden moves under fresh per-round keys -------------
     const submitted: (ResolvedMove<Move> & { key: string })[] = [];
+    const candidates: RevisionCandidate[] = [];
+    const wireOf = new Map<Hex, { type: string; data: unknown }>();
 
     for (const entry of round.moves) {
+      // One ephemeral key per (player, round), not per revision: every revision
+      // of a round is exposed by the same reveal at close, so separate keys
+      // would buy nothing and multiply what the delta has to publish.
       const ephemeral = generateEphemeralKeypair();
       const convKey = playerConversationKey(ephemeral, gm.pubkey);
-      const ciphertext = encrypt(
-        formatMoveEnvelope({ seq, prev, type: entry.wire.type, data: entry.wire.data }),
-        convKey,
-      );
+      const key = bytesToHex(convKey);
 
-      const event = await entry.player.signEvent({
-        ...buildMove(gameId, gm.pubkey, ciphertext, { ephemeral: ephemeral.pubkey }),
-        pubkey: entry.player.pubkey,
-        created_at: now - 1,
-      });
+      const revisions = [
+        ...(entry.drafts ?? []).map((wire) => ({ wire, final: false })),
+        { wire: entry.wire, final: true },
+      ];
 
-      moveEvents.push(event);
+      let winner: { id: Hex; wire: { type: string; data: unknown } } | undefined;
+
+      for (const [rev, revision] of revisions.entries()) {
+        const ciphertext = encrypt(
+          formatMoveEnvelope({
+            seq,
+            prev,
+            rev,
+            final: revision.final,
+            type: revision.wire.type,
+            data: revision.wire.data,
+          }),
+          convKey,
+        );
+
+        const event = await entry.player.signEvent({
+          ...buildMove(gameId, gm.pubkey, ciphertext, { ephemeral: ephemeral.pubkey }),
+          pubkey: entry.player.pubkey,
+          // Revisions are published across the round, not at its close.
+          created_at: now - revisions.length + rev,
+        });
+
+        moveEvents.push(event);
+        candidates.push({
+          id: event.id,
+          player: entry.player.pubkey,
+          envelope: {
+            seq,
+            prev,
+            rev,
+            final: revision.final,
+            type: revision.wire.type,
+            data: revision.wire.data,
+          },
+        });
+        keyOf.set(event.id, key);
+        if (revision.final) winner = { id: event.id, wire: revision.wire };
+      }
+
+      if (!winner) throw new Error('a submission produced no final revision');
+      wireOf.set(winner.id, winner.wire);
       submitted.push({
-        id: event.id,
+        id: winner.id,
         player: entry.player.pubkey,
         seat: seats.indexOf(entry.player.pubkey),
         move: entry.move,
-        key: bytesToHex(convKey),
+        key,
       });
+    }
+
+    // The GM does not trust the script's word for which revision won: it runs
+    // the same selector an auditor will, so a harness bug shows up as a
+    // divergence rather than being papered over on both sides.
+    const winners = selectRevisions(candidates);
+    for (const chosen of submitted) {
+      if (winners.get(chosen.player)?.id !== chosen.id) {
+        throw new Error(`selectRevisions disagreed with the script for ${chosen.player}`);
+      }
     }
 
     // --- GM resolves and closes the round -----------------------------------
@@ -127,9 +220,14 @@ export async function runScriptedGame<Config, State, Move, Patch>(
     const applied: AppliedMove[] = outcome.ordered.map((m) => {
       const source = submitted.find((s) => s.id === m.id);
       if (!source) throw new Error('ordered a move that was not submitted');
-      const wire = round.moves.find((e) => e.player.pubkey === source.player)?.wire;
-      return { id: m.id, move: wire, key: source.key };
+      return { id: m.id, move: wireOf.get(m.id), key: source.key };
     });
+
+    const superseded: AppliedMove[] = supersededRevisions(candidates, winners).map((c) => ({
+      id: c.id,
+      move: { type: c.envelope.type, data: c.envelope.data },
+      key: keyOf.get(c.id),
+    }));
 
     stateEvents.push(
       await gm.signEvent({
@@ -142,6 +240,7 @@ export async function runScriptedGame<Config, State, Move, Patch>(
             applied,
             patch: outcome.patch as unknown,
             system: round.system ?? null,
+            superseded: superseded.length ? superseded : undefined,
           },
         }),
         pubkey: gm.pubkey,

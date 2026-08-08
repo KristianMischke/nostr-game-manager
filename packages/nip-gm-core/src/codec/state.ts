@@ -76,6 +76,15 @@ export interface DeltaContent {
   patch: unknown;
   /** Non-null when this delta is a GM system input rather than player moves. */
   system: unknown | null;
+  /**
+   * Revisions this round discarded, with their keys (NIP-GM §Move revisions).
+   *
+   * Present only when a player revised. Revealing these is what makes the GM's
+   * choice of winner checkable: without them an auditor can see that sibling
+   * move events exist but cannot decrypt them to learn which held the highest
+   * `rev`, leaving room to apply a stale revision.
+   */
+  superseded?: AppliedMove[];
 }
 
 export interface GameDelta {
@@ -117,7 +126,31 @@ export interface GameEnd {
   content: EndContent;
 }
 
-export type GameState = GameStart | GameDelta | GamePrivate | GameEnd;
+/* ------------------------------------------------------------- status ---- */
+
+/** What the GM currently holds for one player in the open round. */
+export interface ReceivedRevision {
+  rev: number;
+  final: boolean;
+}
+
+/**
+ * A GM progress report for the open round (NIP-GM §Round status).
+ *
+ * Not a replay input, and verifiers must ignore it — it is GM-asserted, carries
+ * no state, and is unordered with respect to everything else. It exists so a
+ * player composing a move across a round learns their revisions are landing
+ * before the round closes, rather than after.
+ */
+export interface RoundStatus {
+  type: 'status';
+  gameId: Hex;
+  seq: number;
+  /** Player pubkey → the highest revision the GM has accepted from them. */
+  received: Record<Hex, ReceivedRevision>;
+}
+
+export type GameState = GameStart | GameDelta | GamePrivate | GameEnd | RoundStatus;
 
 /* -------------------------------------------------------------- build ---- */
 
@@ -154,15 +187,31 @@ export function buildDelta(
   ];
   for (const p of delta.awaiting) tags.push(['p', p]);
 
+  const content: Record<string, unknown> = {
+    seq: delta.content.seq,
+    applied: delta.content.applied,
+    patch: delta.content.patch,
+    system: delta.content.system,
+  };
+  // Omitted rather than empty when nobody revised, so ordinary turn-taking
+  // games produce byte-identical deltas to before revisions existed.
+  if (delta.content.superseded?.length) content.superseded = delta.content.superseded;
+
   return {
     kind: stateKindFor(options.mode ?? 'verified', 'delta'),
     tags,
-    content: JSON.stringify({
-      seq: delta.content.seq,
-      applied: delta.content.applied,
-      patch: delta.content.patch,
-      system: delta.content.system,
-    }),
+    content: JSON.stringify(content),
+  };
+}
+
+export function buildStatus(status: Omit<RoundStatus, 'type'>, relay?: string): EventTemplate {
+  return {
+    // Always ephemeral — see stateKindFor. Deliberately no `p` tags: they mean
+    // "you must act" on a delta, and repeating them at status cadence would
+    // drown the turn notification a player actually subscribes for.
+    kind: stateKindFor('verified', 'status'),
+    tags: [['state', 'status'], rootTag(status.gameId, relay), ['seq', String(status.seq)]],
+    content: JSON.stringify({ seq: status.seq, received: status.received }),
   };
 }
 
@@ -220,6 +269,24 @@ function parseApplied(raw: unknown): AppliedMove[] {
       const { id, move, key } = entry as Record<string, unknown>;
       if (isHex64(id)) out.push({ id, move, key: optionalString(key) });
     }
+  }
+  return out;
+}
+
+function parseReceived(raw: unknown): Record<Hex, ReceivedRevision> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {};
+
+  const out: Record<Hex, ReceivedRevision> = {};
+  for (const [pubkey, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!isHex64(pubkey)) continue;
+    if (typeof value !== 'object' || value === null) continue;
+
+    const { rev, final } = value as Record<string, unknown>;
+    // Dropped rather than defaulted: an unreadable rev in a progress report is
+    // worse than a missing one, since a client would show "received" for a
+    // revision the GM may not hold.
+    if (!Number.isSafeInteger(rev) || (rev as number) < 0) continue;
+    out[pubkey] = { rev: rev as number, final: final === true };
   }
   return out;
 }
@@ -296,6 +363,7 @@ export function parseState(event: NostrEvent): ParseResult<GameState> {
       // different orderings to filtering relays and to replaying auditors.
       if (Number.isSafeInteger(raw.seq) && raw.seq !== seq) return fail('seq_mismatch');
 
+      const superseded = parseApplied(raw.superseded);
       return ok({
         type: 'delta',
         gameId,
@@ -306,8 +374,20 @@ export function parseState(event: NostrEvent): ParseResult<GameState> {
           applied: parseApplied(raw.applied),
           patch: raw.patch ?? null,
           system: raw.system ?? null,
+          superseded: superseded.length ? superseded : undefined,
         },
       });
+    }
+
+    case 'status': {
+      const gameId = rootEventId(event.tags);
+      if (!gameId) return fail('missing_root');
+
+      const seq = intTagValue(event.tags, 'seq');
+      if (seq === undefined) return fail('bad_seq');
+      if (Number.isSafeInteger(raw.seq) && raw.seq !== seq) return fail('seq_mismatch');
+
+      return ok({ type: 'status', gameId, seq, received: parseReceived(raw.received) });
     }
 
     case 'end':

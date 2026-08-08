@@ -121,6 +121,37 @@ ignoring them — a move that means one thing to your implementation and another
 a future port is exactly the incompatibility `(game, version)` is supposed to
 rule out.
 
+### Every prefix of a queue must be legal
+
+This one constrains your design, so decide it now rather than discovering it.
+
+Your `Move` is a queue of actions that a player builds up during the round, and
+the client publishes it repeatedly as they go (NIP-GM §Move revisions) so that a
+round closing mid-composition captures what they had rather than nothing. The
+consequence: **the move that gets applied is frequently a partial queue.**
+
+So a `Move` whose validity depends on being complete — "exactly three actions",
+"must end with a commit action", "total cost must equal the budget" — defeats the
+whole mechanism. Every partial would fail `validate`, the player would be treated
+as having submitted nothing, and the work you were trying to preserve is lost
+anyway.
+
+Make an incomplete queue mean something instead:
+
+```ts
+// Bad: only a full queue is legal, so a timeout discards the player's round.
+if (move.actions.length !== 3) return { ok: false, reason: 'need_three_actions' };
+
+// Good: fewer actions is a legal, weaker move.
+if (move.actions.length > 3) return { ok: false, reason: 'too_many_actions' };
+```
+
+An upper bound is fine — it is a prefix-preserving rule. A lower bound or an
+exact count is not.
+
+If some action genuinely only makes sense as part of a complete set, model the
+set as a *single* action rather than as a constraint spanning several.
+
 ---
 
 ## 5. `init`
@@ -161,7 +192,10 @@ not prose that you will reword later.
 
 **Do not validate what the protocol already did.** Signature validity, whether
 the sender is in the game, whether `seq` and `prev` are current, duplicate
-submissions — all handled before your module sees anything. Check rules only.
+submissions, and which of a player's several revisions won — all handled before
+your module sees anything. Check rules only. In particular your module never
+learns that a player revised: it receives exactly one move per player per round,
+the one that stood, with no trace of the drafts.
 
 A subtlety for simultaneous rounds: `validate` sees each move against the state
 at the *start* of the round, because no move in the round has resolved yet. Two

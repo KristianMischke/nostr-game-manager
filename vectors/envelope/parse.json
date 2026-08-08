@@ -1,0 +1,93 @@
+{
+  "note": "Move envelope parsing. `rev` and `final` are NIP-GM §Move revisions; absent means 0 and false, but present-and-malformed is rejected rather than coerced.",
+  "cases": [
+    {
+      "name": "full envelope round-trips",
+      "content": "{\"seq\":12,\"prev\":\"e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411\",\"rev\":3,\"type\":\"queue\",\"data\":{\"actions\":[\"advance\"]},\"final\":true}",
+      "expect": {
+        "ok": true,
+        "value": {
+          "seq": 12,
+          "prev": "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411",
+          "rev": 3,
+          "final": true,
+          "type": "queue",
+          "data": {
+            "actions": [
+              "advance"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "name": "absent rev is revision 0 — a single-shot move, and what pre-revision clients sent",
+      "content": "{\"seq\":1,\"prev\":\"e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411\",\"type\":\"fold\"}",
+      "expect": {
+        "ok": true,
+        "value": {
+          "seq": 1,
+          "prev": "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411",
+          "rev": 0,
+          "final": false,
+          "type": "fold"
+        }
+      }
+    },
+    {
+      "name": "absent final is false",
+      "content": "{\"seq\":1,\"prev\":\"e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411\",\"rev\":2,\"type\":\"x\",\"data\":null}",
+      "expect": {
+        "ok": true,
+        "value": {
+          "seq": 1,
+          "prev": "e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411",
+          "rev": 2,
+          "final": false,
+          "type": "x",
+          "data": null
+        }
+      }
+    },
+    {
+      "name": "reject: negative rev",
+      "content": "{\"seq\":1,\"prev\":\"e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411\",\"rev\":-1,\"type\":\"x\"}",
+      "expect": {
+        "ok": false,
+        "error": "bad_rev"
+      }
+    },
+    {
+      "name": "reject: fractional rev",
+      "content": "{\"seq\":1,\"prev\":\"e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411\",\"rev\":1.5,\"type\":\"x\"}",
+      "expect": {
+        "ok": false,
+        "error": "bad_rev"
+      }
+    },
+    {
+      "name": "reject: rev as a string — never coerced, or a corrupt revision could outrank a good one",
+      "content": "{\"seq\":1,\"prev\":\"e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411\",\"rev\":\"2\",\"type\":\"x\"}",
+      "expect": {
+        "ok": false,
+        "error": "bad_rev"
+      }
+    },
+    {
+      "name": "reject: null rev",
+      "content": "{\"seq\":1,\"prev\":\"e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411\",\"rev\":null,\"type\":\"x\"}",
+      "expect": {
+        "ok": false,
+        "error": "bad_rev"
+      }
+    },
+    {
+      "name": "reject: non-boolean final",
+      "content": "{\"seq\":1,\"prev\":\"e88a691e98d9987c964521dff60025f60700378a4879180dcbbb4a5027850411\",\"rev\":0,\"final\":1,\"type\":\"x\"}",
+      "expect": {
+        "ok": false,
+        "error": "bad_final"
+      }
+    }
+  ]
+}

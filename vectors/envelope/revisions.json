@@ -1,0 +1,244 @@
+{
+  "note": "Revision selection (NIP-GM §Move revisions): highest rev wins, ties broken by lowest event id. `winners` maps player -> winning move id; `superseded` lists discarded ids in input order; `all_final` is whether every player in `awaiting` has a final winning revision. A GM and an auditor must agree on all three from the same unordered event set.",
+  "fields": {
+    "candidates": "the revisions a round received, in arrival order",
+    "winners": "player pubkey -> id of the revision that stands",
+    "superseded": "ids the selector discarded, in the order they appeared in `candidates`",
+    "awaiting": "the round's p tags, for all_final"
+  },
+  "cases": [
+    {
+      "name": "highest rev wins",
+      "candidates": [
+        {
+          "id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "player": "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+          "rev": 0,
+          "final": false
+        },
+        {
+          "id": "2222222222222222222222222222222222222222222222222222222222222222",
+          "player": "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+          "rev": 2,
+          "final": false
+        },
+        {
+          "id": "3333333333333333333333333333333333333333333333333333333333333333",
+          "player": "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+          "rev": 1,
+          "final": false
+        }
+      ],
+      "winners": {
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "superseded": [
+        "1111111111111111111111111111111111111111111111111111111111111111",
+        "3333333333333333333333333333333333333333333333333333333333333333"
+      ],
+      "all_final": false,
+      "awaiting": [
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf"
+      ]
+    },
+    {
+      "name": "arrival order does not matter — relays return events unordered",
+      "candidates": [
+        {
+          "id": "3333333333333333333333333333333333333333333333333333333333333333",
+          "player": "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+          "rev": 1,
+          "final": false
+        },
+        {
+          "id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "player": "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+          "rev": 0,
+          "final": false
+        },
+        {
+          "id": "2222222222222222222222222222222222222222222222222222222222222222",
+          "player": "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+          "rev": 2,
+          "final": false
+        }
+      ],
+      "winners": {
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "superseded": [
+        "3333333333333333333333333333333333333333333333333333333333333333",
+        "1111111111111111111111111111111111111111111111111111111111111111"
+      ],
+      "all_final": false,
+      "awaiting": [
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf"
+      ]
+    },
+    {
+      "name": "equivocation at one rev is broken by lowest event id",
+      "candidates": [
+        {
+          "id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "player": "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+          "rev": 3,
+          "final": false
+        },
+        {
+          "id": "4444444444444444444444444444444444444444444444444444444444444444",
+          "player": "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+          "rev": 3,
+          "final": false
+        }
+      ],
+      "winners": {
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "superseded": [
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      ],
+      "all_final": false,
+      "awaiting": [
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf"
+      ]
+    },
+    {
+      "name": "equivocation tiebreak is order-independent",
+      "candidates": [
+        {
+          "id": "4444444444444444444444444444444444444444444444444444444444444444",
+          "player": "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+          "rev": 3,
+          "final": false
+        },
+        {
+          "id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "player": "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+          "rev": 3,
+          "final": false
+        }
+      ],
+      "winners": {
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf": "4444444444444444444444444444444444444444444444444444444444444444"
+      },
+      "superseded": [
+        "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+      ],
+      "all_final": false,
+      "awaiting": [
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf"
+      ]
+    },
+    {
+      "name": "players are tracked independently",
+      "candidates": [
+        {
+          "id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "player": "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+          "rev": 9,
+          "final": true
+        },
+        {
+          "id": "2222222222222222222222222222222222222222222222222222222222222222",
+          "player": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
+          "rev": 1,
+          "final": true
+        }
+      ],
+      "winners": {
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf": "1111111111111111111111111111111111111111111111111111111111111111",
+        "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "superseded": [],
+      "all_final": true,
+      "awaiting": [
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+        "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
+      ]
+    },
+    {
+      "name": "all_final is false while a player is still revising",
+      "candidates": [
+        {
+          "id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "player": "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+          "rev": 1,
+          "final": true
+        },
+        {
+          "id": "2222222222222222222222222222222222222222222222222222222222222222",
+          "player": "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d",
+          "rev": 3,
+          "final": false
+        }
+      ],
+      "winners": {
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf": "1111111111111111111111111111111111111111111111111111111111111111",
+        "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "superseded": [],
+      "all_final": false,
+      "awaiting": [
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+        "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
+      ]
+    },
+    {
+      "name": "all_final is false for a player who never submitted — a silent player holds the round to timeout",
+      "candidates": [
+        {
+          "id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "player": "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+          "rev": 0,
+          "final": true
+        }
+      ],
+      "winners": {
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf": "1111111111111111111111111111111111111111111111111111111111111111"
+      },
+      "superseded": [],
+      "all_final": false,
+      "awaiting": [
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+        "3bf0c63fcb93463407af97a5e5ee64fa883d107ef9e558472c4eb9aaaefa459d"
+      ]
+    },
+    {
+      "name": "a later revision may withdraw final",
+      "candidates": [
+        {
+          "id": "1111111111111111111111111111111111111111111111111111111111111111",
+          "player": "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+          "rev": 1,
+          "final": true
+        },
+        {
+          "id": "2222222222222222222222222222222222222222222222222222222222222222",
+          "player": "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf",
+          "rev": 2,
+          "final": false
+        }
+      ],
+      "winners": {
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf": "2222222222222222222222222222222222222222222222222222222222222222"
+      },
+      "superseded": [
+        "1111111111111111111111111111111111111111111111111111111111111111"
+      ],
+      "all_final": false,
+      "awaiting": [
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf"
+      ]
+    },
+    {
+      "name": "no candidates at all",
+      "candidates": [],
+      "winners": {},
+      "superseded": [],
+      "all_final": false,
+      "awaiting": [
+        "efc83f01c8fb309df2c8866b8c7924cc8b6f0580afdde1d6e16e2b6107c5f5cf"
+      ]
+    }
+  ]
+}

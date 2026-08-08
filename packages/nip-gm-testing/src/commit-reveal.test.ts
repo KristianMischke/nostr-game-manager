@@ -65,7 +65,7 @@ async function playRound() {
     const ephemeral = generateEphemeralKeypair();
     const convKey = playerConversationKey(ephemeral, gm.pubkey);
     const ciphertext = encrypt(
-      formatMoveEnvelope({ seq: 1, prev: gameId, type: 'orders', data: move }),
+      formatMoveEnvelope({ seq: 1, prev: gameId, rev: 0, final: true, type: 'orders', data: move }),
       convKey,
     );
     const event = await signer.signEvent({

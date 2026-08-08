@@ -210,7 +210,21 @@ The request is [NIP-44](https://nostrhub.io/nip/44)-encrypted because it may car
 }
 ```
 
-The envelope (`seq`, `prev`, `type`, `data`) is protocol; the meaning of `type` and `data` is module-defined. Move content is plaintext for public-move turn-taking games, and [NIP-44](https://nostrhub.io/nip/44)-encrypted to the GM when the move is hidden information — which includes **all simultaneous-round moves**, even in otherwise public-move games (see below). `seq` claims which turn or round the move answers; `prev` pins the state it was made against — together they make stale/duplicate rejection deterministic and auditable. `prev` MUST reference a **public** state event (the `start` event or a `delta`), never a `private` event: rejections are only auditable against state every verifier can order. Leaving after start is a forfeit, which the GM materializes as a system input.
+The envelope (`seq`, `prev`, `rev`, `final`, `type`, `data`) is protocol; the meaning of `type` and `data` is module-defined. Move content is plaintext for public-move turn-taking games, and [NIP-44](https://nostrhub.io/nip/44)-encrypted to the GM when the move is hidden information — which includes **all simultaneous-round moves**, even in otherwise public-move games (see below). `seq` claims which turn or round the move answers; `prev` pins the state it was made against — together they make stale/duplicate rejection deterministic and auditable. `prev` MUST reference a **public** state event (the `start` event or a `delta`), never a `private` event: rejections are only auditable against state every verifier can order. Leaving after start is a forfeit, which the GM materializes as a system input.
+
+### Move revisions
+
+A player MAY publish a move for the same `(seq, prev)` more than once. Each such event carries `rev`, a per-`(player, seq)` counter starting at 0 and strictly increasing, and each MUST contain the player's **complete** move for the round, not a delta against an earlier revision. **The highest `rev` wins**; lower revisions are superseded and never applied.
+
+This exists because a move may be composed over time — a queue of actions assembled during a round — and a player who is still composing when the round closes should not lose the work already committed. Sending complete snapshots rather than appends is what makes that safe: relays drop and reorder events, and a lost revision is fully repaired by the next one rather than leaving the GM with a gap it cannot resolve. `rev` rather than `created_at` decides, because `created_at` is author-asserted and unverifiable.
+
+`final` (default `false`) marks a revision the player will not follow. A GM MAY close a round as soon as every awaited player has submitted a `final` revision, rather than waiting out `turn_timeout`. It is an optimization, never a requirement: a round in which no player ever sets `final` is still closed by timeout with the highest revision each player reached.
+
+Clients composing a move over time SHOULD publish revisions on a **fixed cadence** — the current move, whether or not it changed, until the round closes — rather than on every edit. The number of events a player publishes is visible even when their contents are not, so change-triggered publication leaks how much a player is doing, which for simultaneous rounds is exactly the hidden information the encryption exists to protect.
+
+Two revisions from one player at the same `rev` with different contents is equivocation by a signed key. The GM MUST resolve it deterministically by taking the **lowest event id**, so that an auditor reaches the same conclusion, and SHOULD treat it as evidence of a misbehaving client.
+
+Round-closing deltas MUST reveal conversation keys for superseded revisions alongside the applied one (see [Deltas](#deltas)). Without them an auditor can see that unexplained sibling events exist but cannot prove which should have won, and a GM could apply a stale revision that favors it. The cost is that a player's superseded revisions become readable once the round closes; clients whose revision cadence would expose a meaningful drafting process should account for that.
 
 **GM responses** — same kind, authored by the GM, `e`-tagging the message they answer:
 
@@ -281,10 +295,13 @@ The `p` tags marking who acts next are deliberate: an async player subscribes to
 ```jsonc
 "applied": [
   { "id": "<move_id>", "move": {"type": "bid", "data": {"amount": 40}}, "key": "<nip44 conversation key, hex>" }
+],
+"superseded": [                    // revisions this round replaced, if any
+  { "id": "<move_id>", "move": {"type": "bid", "data": {"amount": 25}}, "key": "<nip44 conversation key, hex>" }
 ]
 ```
 
-Anyone can decrypt each cited ciphertext with its revealed key and confirm it matches the published plaintext, so the round is verifiable the moment it closes. Modules whose resolution is order-sensitive MUST define a canonical order derivable from the events themselves (e.g. ascending move event id, or seat order from the start event) so auditors can reproduce it; the GM's published order MUST match. Player counts large enough to make per-player `p` tags unwieldy are unusual for turn-based games, but a module MAY declare rounds where *everyone* acts and omit per-player tags in favor of a single `["p-all", "true"]`-style marker — left as module discretion.
+Anyone can decrypt each cited ciphertext with its revealed key and confirm it matches the published plaintext, so the round is verifiable the moment it closes. `superseded` carries the same information for every [revision](#move-revisions) the GM discarded, which is what lets an auditor confirm the applied revision really was the highest each player reached. Modules whose resolution is order-sensitive MUST define a canonical order derivable from the events themselves (e.g. ascending move event id, or seat order from the start event) so auditors can reproduce it; the GM's published order MUST match. Player counts large enough to make per-player `p` tags unwieldy are unusual for turn-based games, but a module MAY declare rounds where *everyone* acts and omit per-player tags in favor of a single `["p-all", "true"]`-style marker — left as module discretion.
 
 ### Private state
 
@@ -304,6 +321,28 @@ Per-player hidden state (hole cards, fog of war):
 ```
 
 All private payloads in this protocol use [NIP-44](https://nostrhub.io/nip/44). [NIP-44](https://nostrhub.io/nip/44) encrypts content but not metadata: observers see that private state moved from GM to player at a given moment. **This is acceptable here because of turn cadence** — in a well-formed hidden-info game the GM sends a private event to *every* involved player each turn (a no-op/padding payload when a player has no new secrets), so the existence and timing of private events reveals nothing beyond what the game's public structure already implies. Modules whose private state does *not* follow the turn cadence (event-driven secrets, where the mere arrival of a private event is informative) SHOULD either pad to a fixed cadence or have implementers wrap those events in [NIP-59](https://nostrhub.io/nip/59) gift wrap instead. These events are persistent in `verified` mode so offline players receive them on reconnect.
+
+### Round status
+
+An optional GM broadcast reporting which revisions it has accepted for the open round:
+
+```jsonc
+{
+  "kind": 21601,                       // ALWAYS ephemeral, in both persistence modes
+  "tags": [
+    ["state", "status"],
+    ["e", "<game_id>", "", "root"],
+    ["seq", "13"]
+  ],
+  "content": "{\"seq\":13, \"received\":{\"<player_pubkey>\":{\"rev\":2,\"final\":false}}}"
+}
+```
+
+A published move is not an applied move: it may be superseded, rejected, or simply never have reached the GM. Without this event a player learns their submission's fate only when the round closes, which for a move composed across a whole round is far too late to do anything about. `status` gives clients a "received, revision 2" signal and doubles as the public "4 of 6 locked in" indicator, in one event covering every player rather than a response per revision.
+
+It is **not a replay input** and MUST be ignored by verifiers: it is GM-asserted, unordered, and carries no state. It is published on the ephemeral kind in both persistence modes for the same reason — it has no archival value and would otherwise dominate a game's permanent log.
+
+It deliberately carries no `p` tags. Players subscribe to `{"kinds":[2601], "#p":["<their pubkey>"]}` for turn notifications, and tagging every player on a high-frequency status event would drown that signal.
 
 ### End and abort
 
@@ -336,6 +375,8 @@ Hidden info and verifiability pull in opposite directions; commit-reveal reconci
 **Hidden player moves** (sealed bids, simultaneous orders): the player generates an ephemeral keypair, includes its pubkey in the move event as `["ephemeral", "<pubkey>"]`, and [NIP-44](https://nostrhub.io/nip/44)-encrypts move content to the GM using it. The signed, timestamped, persistent ciphertext is the player's commitment; revealing the [NIP-44](https://nostrhub.io/nip/44) conversation key (derivable by the GM from the ephemeral pubkey) makes it verifiable. Two reveal cadences:
 
 - **Per-round reveal** (REQUIRED for simultaneous rounds): the player uses a fresh ephemeral key *per round*; the GM reveals each move's conversation key in the round-closing delta as shown above. A fresh key per round is what keeps the reveal scoped — a conversation key decrypts everything between one key pair.
+
+  The scope is the round, not the event: every [revision](#move-revisions) a player publishes within one round MUST reuse that round's ephemeral key. Beyond saving keys, this is what makes the reveal obligation enforceable. Because one key opens the whole round, the key the GM publishes for the revision it applied also opens the revisions it did not — so a GM cannot both apply a stale revision and suppress the higher ones, and an auditor can read what was hidden rather than merely observing that something was. A fresh key per revision would make suppressed revisions permanently unreadable and reduce that check to an unfalsifiable suspicion. Note the corollary: once any revision of a round is revealed, *all* of them are, which is the mechanism behind the drafting-process exposure noted in §Move revisions.
 - **End-of-game reveal** (for moves that must stay hidden through play, e.g. secret orders resolved only at the end): one ephemeral key per game; the GM reveals the conversation keys in the end event's `key_reveals`.
 
 In both cadences the GM derives every conversation key itself — `ECDH(gm_privkey, ephemeral_pubkey)` equals what the player computed — so reveals never require player cooperation and no private key is ever transmitted. The only reveal that *does* depend on a player is a seed contribution, covered above.
@@ -349,7 +390,12 @@ In `verified` mode, anyone can audit a finished game:
 1. Fetch the start event (config, commits), all move messages, all deltas/system inputs, and the end event (reveals), via the `#e` game-id filter on kinds 2600 and 2601.
 2. Order inputs by the `seq` chain and, within simultaneous rounds, by the module's canonical resolution order — never by relay return order or `created_at` alone.
 3. Check `seed_commit` against the revealed seed and salt; decrypt every hidden move with its revealed conversation key (per-round keys from round-closing deltas, per-game keys from `key_reveals`) and check the plaintexts against their ciphertext commitments.
-4. Re-run the game module over the ordered inputs and confirm the resulting states match every published delta, that every rejected move was in fact illegal, that no signed legal move was silently dropped, and that system inputs (timeouts) are plausible against event timestamps.
+4. Where a player published several [revisions](#move-revisions) for a round, confirm the applied one is the highest `rev` they reached — decrypting the superseded revisions with the keys the delta reveals for them — with ties broken by lowest event id.
+5. Re-run the game module over the ordered inputs and confirm the resulting states match every published delta, that every rejected move was in fact illegal, that no signed legal move was silently dropped, and that system inputs (timeouts) are plausible against event timestamps.
+
+`status` events are excluded from all of the above: they are GM-asserted progress reports, not inputs.
+
+**A finished game is a fixed record, but relays keep accepting events that reference it.** Verification therefore derives its verdict *only* from what the GM cited, so events published afterwards cannot change a replayed state or turn a passing audit into a failing one. Events from anyone not in the start event's `p` tags are ignored outright. An uncited move from a seated player is reported, because it might be a revision the GM dropped — but a player who publishes one after the round closed leaves an identical trace, and `created_at` is author-asserted, so the log cannot attribute it. Implementations MUST report this as a warning and MUST NOT treat it as evidence against the GM.
 
 Divergence is cryptographic evidence of a faulty or dishonest GM, attributable to its pubkey. This is the actual trust mechanism; version strings and `rules_hash` are compatibility metadata, not security. Reputation systems over audit results (e.g. [NIP-32](https://nostrhub.io/nip/32) labels on GM pubkeys) are encouraged but out of scope.
 

@@ -20,7 +20,8 @@ Write vectors alongside the TypeScript implementation, never after.
 
 | Directory | Contents | Status |
 |---|---|---|
-| `codec/` | Event ⇄ parsed struct for every kind, including tag-order cases — `p` tag order is seat order. | 56 cases |
+| `codec/` | Event ⇄ parsed struct for every kind, including tag-order cases — `p` tag order is seat order. | 63 cases |
+| `envelope/` | Move envelope parsing, and the revision-selection rule a GM and an auditor must agree on. | 17 cases |
 | `nip44/` | The official NIP-44 v2 vectors, vendored unchanged from [paulmillr/nip44](https://github.com/paulmillr/nip44). | 129 cases |
 | `rng/` | `(seed, game_id, seq, label)` → derived bytes, `int` draws and shuffles. | 15 cases |
 | `commit/` | `(seed, salt)` → `seed_commit`, plus multi-party seed combination. | 5 cases |

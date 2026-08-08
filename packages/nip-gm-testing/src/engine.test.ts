@@ -396,3 +396,348 @@ describe('auditGame', () => {
     expect(report.findings.map((f) => f.code)).toContain('seq_chain_broken');
   });
 });
+
+describe('auditGame with move revisions', () => {
+  // Alice composes her move across the round, publishing three revisions
+  // before settling; Bob and Carol submit once. NIP-GM §Move revisions.
+  const revisedScript: ScriptedRound<OrdersMove>[] = [
+    {
+      moves: [
+        {
+          player: alice,
+          move: { type: 'advance', distance: 3 } as OrdersMove,
+          wire: ordersMove({ type: 'advance', distance: 3 }),
+          drafts: [ordersMove({ type: 'hold' }), ordersMove({ type: 'advance', distance: 1 })],
+        },
+        {
+          player: bob,
+          move: { type: 'advance', distance: 1 } as OrdersMove,
+          wire: ordersMove({ type: 'advance', distance: 1 }),
+        },
+        { player: carol, move: { type: 'hold' } as OrdersMove, wire: ordersMove({ type: 'hold' }) },
+      ],
+    },
+  ];
+
+  const playRevised = () =>
+    runScriptedGame(ordersModule, {
+      gm,
+      players: [alice, bob, carol],
+      config: CONFIG,
+      rounds: revisedScript,
+    });
+
+  const audit = (t: Awaited<ReturnType<typeof playRevised>>, states = t.states) =>
+    auditGame(ordersModule, {
+      gmPubkey: t.gmPubkey,
+      start: t.start,
+      states,
+      moves: t.moves,
+    });
+
+  it('accepts a round in which a player revised', async () => {
+    const t = await playRevised();
+    const report = audit(t);
+    expect(report.findings.filter((f) => f.severity === 'error')).toEqual([]);
+    expect(report.ok).toBe(true);
+  });
+
+  it('publishes every superseded revision with its key', async () => {
+    const t = await playRevised();
+    const delta = JSON.parse(t.states[0].content);
+    // Two drafts superseded; each must carry a key or the audit below is blind.
+    expect(delta.superseded).toHaveLength(2);
+    expect(delta.superseded.every((e: { key?: string }) => typeof e.key === 'string')).toBe(true);
+  });
+
+  it('does not mistake a superseded revision for a dropped move', async () => {
+    // The failure this guards against is noisy rather than unsafe: every draft
+    // would raise a warning, making the audit report useless for a game where
+    // revision is the normal path.
+    const t = await playRevised();
+    expect(audit(t).findings.map((f) => f.code)).not.toContain('possible_dropped_move');
+  });
+
+  it('catches a GM that applies a stale revision', async () => {
+    // The attack the reveal obligation exists to stop: Alice's rev 2 said
+    // advance 3, but the GM applies her rev 0 (hold) instead — while still
+    // publishing the higher revisions, because it must.
+    const t = await playRevised();
+    const delta = JSON.parse(t.states[0].content);
+
+    const aliceApplied = delta.applied.find(
+      (e: { id: string }) => t.moves.find((m) => m.id === e.id)?.pubkey === alice.pubkey,
+    );
+    const aliceDraft = delta.superseded.find(
+      (e: { id: string }) => t.moves.find((m) => m.id === e.id)?.pubkey === alice.pubkey,
+    );
+    expect(aliceApplied && aliceDraft).toBeTruthy();
+
+    // Swap the applied entry with a superseded one, keeping both cited.
+    delta.applied = delta.applied.map((e: { id: string }) =>
+      e.id === aliceApplied.id ? aliceDraft : e,
+    );
+    delta.superseded = delta.superseded
+      .filter((e: { id: string }) => e.id !== aliceDraft.id)
+      .concat(aliceApplied);
+
+    const forged = await gm.signEvent({
+      kind: t.states[0].kind,
+      tags: t.states[0].tags,
+      content: JSON.stringify(delta),
+      pubkey: gm.pubkey,
+      created_at: t.states[0].created_at,
+    });
+
+    const report = audit(t, [forged, ...t.states.slice(1)]);
+    expect(report.ok).toBe(false);
+    expect(report.findings.map((f) => f.code)).toContain('revision_not_highest');
+  });
+
+  it('flags omitted lower revisions without calling them fraud', async () => {
+    // Dropping `superseded` from an otherwise honest delta is a spec violation,
+    // not an attack: the applied move is still the highest. It should be
+    // reported, but as uncited moves rather than as a wrong winner.
+    const t = await playRevised();
+    const delta = JSON.parse(t.states[0].content);
+    delete delta.superseded;
+
+    const forged = await gm.signEvent({
+      kind: t.states[0].kind,
+      tags: t.states[0].tags,
+      content: JSON.stringify(delta),
+      pubkey: gm.pubkey,
+      created_at: t.states[0].created_at,
+    });
+
+    const report = audit(t, [forged, ...t.states.slice(1)]);
+    const codes = report.findings.map((f) => f.code);
+    expect(codes).toContain('possible_dropped_move');
+    expect(codes).not.toContain('uncited_higher_revision');
+  });
+
+  it('catches a GM that applies a stale revision *and* hides the higher ones', async () => {
+    // The stealthy version of the attack: apply Alice's rev 0 and omit revs 1
+    // and 2 entirely, so `revision_not_highest` has nothing to compare against.
+    //
+    // It still fails, because Alice's whole round rides one ephemeral key: the
+    // key the GM must reveal for the revision it *did* cite also decrypts the
+    // ones it hid. Hiding the evidence is impossible once any key for that
+    // round is out.
+    const t = await playRevised();
+    const delta = JSON.parse(t.states[0].content);
+
+    const isAlice = (e: { id: string }) =>
+      t.moves.find((m) => m.id === e.id)?.pubkey === alice.pubkey;
+    const aliceDraft = delta.superseded.filter(isAlice)[0];
+
+    delta.applied = delta.applied.map((e: { id: string }) => (isAlice(e) ? aliceDraft : e));
+    delta.superseded = delta.superseded.filter((e: { id: string }) => !isAlice(e));
+
+    const forged = await gm.signEvent({
+      kind: t.states[0].kind,
+      tags: t.states[0].tags,
+      content: JSON.stringify(delta),
+      pubkey: gm.pubkey,
+      created_at: t.states[0].created_at,
+    });
+
+    const report = audit(t, [forged, ...t.states.slice(1)]);
+    // Both hidden revisions outrank the applied rev 0, so both are reported.
+    const hidden = report.findings.filter((f) => f.code === 'uncited_higher_revision');
+    expect(hidden).toHaveLength(2);
+    expect(hidden.some((f) => f.detail.includes('rev 2'))).toBe(true);
+    expect(hidden.every((f) => f.detail.includes('the rev 0 the GM applied'))).toBe(true);
+  });
+
+  it('feeds the module exactly one move per player, and it is the last revision', async () => {
+    // Revisions are transport, not game logic. Note this cannot be shown by
+    // comparing a drafted run against an undrafted one: the extra events give
+    // Alice's winning move a different event id, and event ids feed the
+    // canonical ordering, so the two games legitimately diverge. The claim that
+    // holds is about what reaches the engine.
+    const t = await playRevised();
+    const delta = JSON.parse(t.states[0].content);
+
+    expect(delta.applied).toHaveLength(3);
+    const authors = delta.applied.map(
+      (e: { id: string }) => t.moves.find((m) => m.id === e.id)?.pubkey,
+    );
+    expect(new Set(authors).size).toBe(3);
+
+    const aliceMove = delta.applied.find(
+      (e: { id: string }) => t.moves.find((m) => m.id === e.id)?.pubkey === alice.pubkey,
+    ).move;
+    expect(aliceMove).toEqual(ordersMove({ type: 'advance', distance: 3 }));
+  });
+
+  describe('events published after the game is over', () => {
+    // A finished game is a fixed record, but relays keep accepting events that
+    // reference it. Anyone can publish more, forever, for free. The property
+    // that has to hold is that none of it can change the audit's verdict.
+
+    const forgeMove = async (
+      t: Awaited<ReturnType<typeof playRevised>>,
+      author: typeof alice,
+      content: string,
+      createdAt = 2_000_000_000,
+    ) => {
+      const { buildMove } = await import('nip-gm-core');
+      return author.signEvent({
+        ...buildMove(t.start.id, gm.pubkey, content),
+        pubkey: author.pubkey,
+        created_at: createdAt,
+      });
+    };
+
+    it('ignores a stranger’s events entirely', async () => {
+      // Not merely "does not fail" — produces no findings at all. A stranger
+      // able to add warnings could smear an honest GM's record at will.
+      const t = await playRevised();
+      const mallory = signerFromSeed(99);
+      const junk = await forgeMove(
+        t,
+        mallory,
+        JSON.stringify({ seq: 1, prev: t.start.id, rev: 0, type: 'advance', data: {} }),
+      );
+
+      const before = audit(t).findings;
+      const after = audit(t);
+      expect(after.findings).toEqual(before);
+      expect(after.ok).toBe(true);
+      void junk;
+      expect(
+        auditGame(ordersModule, {
+          gmPubkey: t.gmPubkey,
+          start: t.start,
+          states: t.states,
+          moves: [...t.moves, junk],
+        }).findings,
+      ).toEqual(before);
+    });
+
+    it('rejects an unsigned move at the gate rather than reporting it as dropped', async () => {
+      // Everything the uncited-move pass reports has already been through
+      // verifyEvent, because it iterates only events that made it into the
+      // move index. An event with a bad signature must not reach it at all —
+      // otherwise anyone could forge moves from a seated player's pubkey and
+      // have them reported as revisions the GM dropped.
+      const t = await playRevised();
+      const real = await forgeMove(
+        t,
+        alice,
+        JSON.stringify({ seq: 1, prev: t.start.id, rev: 999, type: 'advance', data: {} }),
+      );
+      const unsigned = { ...real, sig: 'f'.repeat(128) };
+
+      const report = auditGame(ordersModule, {
+        gmPubkey: t.gmPubkey,
+        start: t.start,
+        states: t.states,
+        moves: [...t.moves, unsigned],
+      });
+
+      const codes = report.findings.map((f) => f.code);
+      expect(codes).toContain('bad_move_signature');
+      expect(codes).not.toContain('uncited_higher_revision');
+      expect(report.ok).toBe(true);
+    });
+
+    it('rejects a move whose content was altered under a valid signature', async () => {
+      // A schnorr signature covers only the id, so checking the signature
+      // without recomputing the hash would let this through.
+      const t = await playRevised();
+      const real = await forgeMove(
+        t,
+        alice,
+        JSON.stringify({ seq: 1, prev: t.start.id, rev: 999, type: 'advance', data: {} }),
+      );
+      const tampered = {
+        ...real,
+        content: JSON.stringify({ seq: 1, prev: t.start.id, rev: 1000, type: 'hold', data: {} }),
+      };
+
+      const report = auditGame(ordersModule, {
+        gmPubkey: t.gmPubkey,
+        start: t.start,
+        states: t.states,
+        moves: [...t.moves, tampered],
+      });
+
+      expect(report.findings.map((f) => f.code)).toContain('bad_move_signature');
+      expect(report.ok).toBe(true);
+    });
+
+    it('cannot flip a seated player’s late forgery into an audit failure', async () => {
+      // Alice backdates a plaintext move claiming a huge rev for a closed
+      // round. It is reported, because it might equally be a revision the GM
+      // dropped — but it stays a warning and the game still verifies.
+      const t = await playRevised();
+      const late = await forgeMove(
+        t,
+        alice,
+        JSON.stringify({ seq: 1, prev: t.start.id, rev: 999, type: 'advance', data: {} }),
+        t.start.created_at + 1,
+      );
+
+      const report = auditGame(ordersModule, {
+        gmPubkey: t.gmPubkey,
+        start: t.start,
+        states: t.states,
+        moves: [...t.moves, late],
+      });
+
+      expect(report.findings.filter((f) => f.severity === 'error')).toEqual([]);
+      expect(report.ok).toBe(true);
+      expect(report.findings.map((f) => f.code)).toContain('uncited_higher_revision');
+    });
+
+    it('replays to the same state regardless of what was published afterwards', async () => {
+      // The verdict and the state both come only from what the GM cited, so
+      // later events cannot move them.
+      const t = await playRevised();
+      const late = await forgeMove(
+        t,
+        alice,
+        JSON.stringify({ seq: 1, prev: t.start.id, rev: 999, type: 'advance', data: {} }),
+      );
+
+      const clean = audit(t);
+      const polluted = auditGame(ordersModule, {
+        gmPubkey: t.gmPubkey,
+        start: t.start,
+        states: t.states,
+        moves: [...t.moves, late],
+      });
+
+      expect(canonicalJson(polluted.state)).toBe(canonicalJson(clean.state));
+      expect(polluted.rounds).toBe(clean.rounds);
+    });
+  });
+
+  it('reproduces the game id when the seed and start time are pinned', async () => {
+    // Only the start event is reproducible, and that is the part fixtures need
+    // — the game id is what every other event roots to.
+    //
+    // The move log deliberately is not: each move draws a fresh ephemeral
+    // keypair and NIP-44 picks a random nonce, so ciphertexts and therefore
+    // event ids differ per run. Under an id-sensitive resolution order that
+    // also makes the final state differ, so two harness runs are self-consistent
+    // games rather than the same game. Anything needing a fixed log must pin
+    // event ids itself, which is why vectors/games/orders.json is a GameLog of
+    // synthetic ids rather than harness output.
+    const opts = {
+      gm,
+      players: [alice, bob, carol],
+      config: CONFIG,
+      rounds: revisedScript,
+      seed: new Uint8Array(32).fill(7),
+      salt: new Uint8Array(32).fill(8),
+      startedAt: 1_700_000_000,
+    };
+    const a = await runScriptedGame(ordersModule, opts);
+    const b = await runScriptedGame(ordersModule, opts);
+    expect(a.start.id).toBe(b.start.id);
+    expect(a.moves.map((m) => m.id)).not.toEqual(b.moves.map((m) => m.id));
+  });
+});

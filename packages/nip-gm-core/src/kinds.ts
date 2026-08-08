@@ -65,23 +65,38 @@ export function stateKind(mode: PersistenceMode): number {
 }
 
 /** State event subtypes, carried in the non-indexed `state` tag. */
-export type StateType = 'start' | 'delta' | 'private' | 'end' | 'abort';
+export type StateType = 'start' | 'delta' | 'private' | 'end' | 'abort' | 'status';
 
 /** Subtypes that are always persistent, regardless of mode (NIP-GM §End and abort). */
 const ALWAYS_REGULAR: ReadonlySet<StateType> = new Set<StateType>(['start', 'end', 'abort']);
 
 /**
- * The state kind for a specific subtype in a given mode, honouring the rule
- * that lifecycle events stay on the regular kind even in `casual` mode.
+ * Subtypes that are never persistent, regardless of mode (NIP-GM §Round status).
+ * `status` is a progress report, not an input: it has no replay value and is
+ * published often enough that persisting it would dominate a game's log.
+ */
+const ALWAYS_EPHEMERAL: ReadonlySet<StateType> = new Set<StateType>(['status']);
+
+/**
+ * The state kind for a specific subtype in a given mode, honouring the rules
+ * that lifecycle events stay on the regular kind even in `casual` mode and that
+ * `status` stays ephemeral even in `verified` mode.
  */
 export function stateKindFor(mode: PersistenceMode, type: StateType): number {
   if (ALWAYS_REGULAR.has(type)) return KIND.STATE;
+  if (ALWAYS_EPHEMERAL.has(type)) return KIND.STATE_EPHEMERAL;
   return stateKind(mode);
 }
 
-/** Both kinds a game's events may appear on, for building subscription filters. */
+/**
+ * Every kind a game's events may appear on, for building subscription filters.
+ *
+ * Note `verified` includes the ephemeral state kind: `status` rides it in both
+ * modes, so a verified-mode client that filtered it out would never see a
+ * round-progress update.
+ */
 export function gameKinds(mode: PersistenceMode): number[] {
   return mode === 'casual'
     ? [KIND.MESSAGE_EPHEMERAL, KIND.STATE_EPHEMERAL, KIND.STATE]
-    : [KIND.MESSAGE, KIND.STATE];
+    : [KIND.MESSAGE, KIND.STATE, KIND.STATE_EPHEMERAL];
 }

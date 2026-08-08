@@ -9,7 +9,24 @@ export interface PendingMove<Move = unknown> {
   seq: number;
   move: Move;
   submittedAt: number;
+  /** Which revision this event carried (NIP-GM §Move revisions). */
+  rev: number;
+  /** Whether it was published as the player's last word for the round. */
+  final: boolean;
 }
+
+/**
+ * How far my current move has got, for a move composed across a round.
+ *
+ * - `local` — edited but not yet published; the cadence timer has not fired.
+ * - `sent` — published to relays, but the GM has not acknowledged this revision.
+ * - `received` — a `status` event from the GM reports this `rev` or higher.
+ *
+ * `sent` is the state that matters to a player: their move is on a relay but
+ * nothing yet proves the GM has it, and if the round closed now they might lose
+ * the work. Only `received` rules that out.
+ */
+export type MoveSyncState = 'local' | 'sent' | 'received';
 
 export interface ProtocolError {
   code: string;
@@ -49,8 +66,22 @@ export interface GameSnapshot<State = unknown, Move = unknown> {
    */
   needsMyMove: boolean;
 
-  /** My in-flight move, cleared when the round-closing delta lands. */
+  /** My in-flight move — the highest revision I have published this round. */
   pending: PendingMove<Move> | null;
+
+  /** How far my current move has got toward the GM. */
+  sync: MoveSyncState;
+  /**
+   * The highest revision the GM has acknowledged from me, from its `status`
+   * events. `-1` when it has acknowledged nothing this round.
+   */
+  ackedRev: number;
+  /**
+   * Per-player acknowledgement, straight from the latest `status` event — the
+   * "4 of 6 locked in" indicator. Empty when the GM publishes no status.
+   */
+  received: Record<Hex, { rev: number; final: boolean }>;
+
   error: ProtocolError | null;
   /** Set once the game has ended. */
   result: GameResult | null;
@@ -62,6 +93,22 @@ export function needsMyMove(
   pending: PendingMove | null,
 ): boolean {
   if (!me) return false;
-  if (pending) return false;
+  // A non-final revision is a move still being composed, so I do still owe one.
+  // Treating any pending revision as "done" is the bug this guards: with
+  // revisions the player publishes many times per round, and the first
+  // publication would otherwise silently switch the UI off.
+  if (pending?.final) return false;
   return awaiting.includes(me);
+}
+
+/**
+ * Where my move stands relative to the GM's acknowledgements.
+ *
+ * `ackedRev` is the highest revision the GM reported for me in a `status`
+ * event; a GM that publishes no status leaves every published revision at
+ * `sent`, which is the honest answer rather than an optimistic one.
+ */
+export function moveSyncState(pending: PendingMove | null, ackedRev: number): MoveSyncState {
+  if (!pending) return 'local';
+  return ackedRev >= pending.rev ? 'received' : 'sent';
 }

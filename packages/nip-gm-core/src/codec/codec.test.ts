@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { KIND } from '../kinds.js';
+import { KIND, type PersistenceMode } from '../kinds.js';
 import type { EventTemplate, Hex, NostrEvent } from '../types.js';
 import { buildAnnouncement, parseAnnouncement } from './announcement.js';
 import { buildDiscoveryOffer, buildDiscoveryRequest, parseDiscovery } from './discovery.js';
@@ -37,7 +37,7 @@ describe('announcement (32600)', () => {
     version: '1.2.0',
     rulesHash: 'f'.repeat(64),
     relays: ['wss://relay1.example', 'wss://relay2.example'],
-    modes: ['verified', 'casual'] as const,
+    modes: ['verified', 'casual'] satisfies PersistenceMode[] as PersistenceMode[],
     config: {
       name: 'Ace GM',
       about: "Hosted hold'em since 2026.",
