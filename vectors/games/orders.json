@@ -1,0 +1,326 @@
+{
+  "note": "Full input log for the Orders reference module (packages/nip-gm-testing/src/example/orders.ts). A port implements the module and the engine, replays `rounds` in order, and must reproduce `expected.final_state` and every `expected.patches` entry byte-for-byte after canonical-JSON serialization.",
+  "module": {
+    "id": "net.example.orders",
+    "version": "1.0.0",
+    "resolution_order": "shuffled"
+  },
+  "game_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "seats": [
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+  ],
+  "seed": "0303030303030303030303030303030303030303030303030303030303030303",
+  "config": {
+    "boardSize": 12,
+    "maxRounds": 6
+  },
+  "rounds": [
+    {
+      "now": 1700000000,
+      "moves": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000001",
+          "player": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "seat": 0,
+          "move": {
+            "type": "advance",
+            "distance": 2
+          }
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000002",
+          "player": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "seat": 1,
+          "move": {
+            "type": "advance",
+            "distance": 2
+          }
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000003",
+          "player": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "seat": 2,
+          "move": {
+            "type": "hold"
+          }
+        }
+      ]
+    },
+    {
+      "now": 1700000060,
+      "moves": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000004",
+          "player": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "seat": 0,
+          "move": {
+            "type": "advance",
+            "distance": 1
+          }
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000005",
+          "player": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "seat": 1,
+          "move": {
+            "type": "hold"
+          }
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000006",
+          "player": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "seat": 2,
+          "move": {
+            "type": "advance",
+            "distance": 3
+          }
+        }
+      ]
+    },
+    {
+      "now": 1700000120,
+      "moves": [
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000007",
+          "player": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "seat": 0,
+          "move": {
+            "type": "hold"
+          }
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000008",
+          "player": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "seat": 1,
+          "move": {
+            "type": "advance",
+            "distance": 3
+          }
+        },
+        {
+          "id": "0000000000000000000000000000000000000000000000000000000000000009",
+          "player": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "seat": 2,
+          "move": {
+            "type": "advance",
+            "distance": 1
+          }
+        }
+      ]
+    },
+    {
+      "now": 1700000180,
+      "moves": [
+        {
+          "id": "000000000000000000000000000000000000000000000000000000000000000a",
+          "player": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "seat": 0,
+          "move": {
+            "type": "advance",
+            "distance": 2
+          }
+        },
+        {
+          "id": "000000000000000000000000000000000000000000000000000000000000000b",
+          "player": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "seat": 1,
+          "move": {
+            "type": "advance",
+            "distance": 1
+          }
+        },
+        {
+          "id": "000000000000000000000000000000000000000000000000000000000000000c",
+          "player": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+          "seat": 2,
+          "move": {
+            "type": "hold"
+          }
+        }
+      ]
+    }
+  ],
+  "expected": {
+    "final_seq": 4,
+    "result": null,
+    "ordered_move_ids": [
+      [
+        "0000000000000000000000000000000000000000000000000000000000000003",
+        "0000000000000000000000000000000000000000000000000000000000000001",
+        "0000000000000000000000000000000000000000000000000000000000000002"
+      ],
+      [
+        "0000000000000000000000000000000000000000000000000000000000000005",
+        "0000000000000000000000000000000000000000000000000000000000000006",
+        "0000000000000000000000000000000000000000000000000000000000000004"
+      ],
+      [
+        "0000000000000000000000000000000000000000000000000000000000000008",
+        "0000000000000000000000000000000000000000000000000000000000000007",
+        "0000000000000000000000000000000000000000000000000000000000000009"
+      ],
+      [
+        "000000000000000000000000000000000000000000000000000000000000000b",
+        "000000000000000000000000000000000000000000000000000000000000000a",
+        "000000000000000000000000000000000000000000000000000000000000000c"
+      ]
+    ],
+    "patches": [
+      {
+        "round": 1,
+        "resolved": [
+          {
+            "player": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "action": "hold",
+            "tile": 5
+          },
+          {
+            "player": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "action": "advance",
+            "tile": 0
+          },
+          {
+            "player": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "action": "bounced",
+            "tile": 3
+          }
+        ],
+        "storm": null,
+        "eliminated": []
+      },
+      {
+        "round": 2,
+        "resolved": [
+          {
+            "player": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "action": "hold",
+            "tile": 3
+          },
+          {
+            "player": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "action": "advance",
+            "tile": 8
+          },
+          {
+            "player": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "action": "advance",
+            "tile": 1
+          }
+        ],
+        "storm": null,
+        "eliminated": []
+      },
+      {
+        "round": 3,
+        "resolved": [
+          {
+            "player": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "action": "advance",
+            "tile": 6
+          },
+          {
+            "player": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "action": "hold",
+            "tile": 1
+          },
+          {
+            "player": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "action": "advance",
+            "tile": 9
+          }
+        ],
+        "storm": null,
+        "eliminated": []
+      },
+      {
+        "round": 4,
+        "resolved": [
+          {
+            "player": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "action": "advance",
+            "tile": 7
+          },
+          {
+            "player": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "action": "advance",
+            "tile": 3
+          },
+          {
+            "player": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+            "action": "hold",
+            "tile": 9
+          }
+        ],
+        "storm": {
+          "tile": 6,
+          "killed": []
+        },
+        "eliminated": []
+      }
+    ],
+    "awaiting": [
+      [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      ],
+      [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      ],
+      [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      ],
+      [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+      ]
+    ],
+    "final_state": {
+      "config": {
+        "boardSize": 12,
+        "maxRounds": 6
+      },
+      "eliminated": [],
+      "round": 4,
+      "storms": [
+        {
+          "at": 4,
+          "tile": 6
+        },
+        {
+          "at": 5,
+          "tile": 6
+        },
+        {
+          "at": 6,
+          "tile": 3
+        },
+        {
+          "at": 7,
+          "tile": 7
+        }
+      ],
+      "units": {
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": {
+          "energy": 2,
+          "tile": 3
+        },
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": {
+          "energy": 1,
+          "tile": 7
+        },
+        "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc": {
+          "energy": 5,
+          "tile": 9
+        }
+      }
+    }
+  }
+}

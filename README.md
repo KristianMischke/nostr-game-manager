@@ -5,9 +5,10 @@ games over Nostr, with a Game Master client executing game logic, players
 submitting signed moves, and anyone able to spectate or audit.
 
 > Status: early. The protocol spec is a `draft` with open questions; the code is
-> at milestone 3 of 8 — the event codec and the commit-reveal crypto are in
-> place and pinned by vectors, including the official NIP-44 suite. Sessions,
-> the GM runner and the React bindings are not. Nothing is published yet.
+> at milestone 4 of 8 — codec, commit-reveal crypto, the replay engine, the
+> verifier and the determinism harness are in place, all pinned by vectors
+> including the official NIP-44 suite. Relay transport, the GM daemon and the
+> React bindings are not. Nothing is published yet.
 
 Porting existing game logic into a module? See
 [docs/porting-game-logic.md](docs/porting-game-logic.md).

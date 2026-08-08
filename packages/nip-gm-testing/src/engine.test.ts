@@ -1,0 +1,398 @@
+/**
+ * Engine, determinism harness and verifier, exercised against the Orders
+ * reference module — a simultaneous-round game with hidden moves, contested
+ * resolution and scheduled randomness.
+ */
+import { describe, expect, it } from 'vitest';
+import {
+  auditGame,
+  canonicalJson,
+  GameEngine,
+  replay,
+  type GameLog,
+  type Hex,
+  type ResolvedMove,
+} from 'nip-gm-core';
+import { checkDeterminism } from './determinism.js';
+import { runScriptedGame, type ScriptedRound } from './harness.js';
+import { signerFromSeed } from './memory-signer.js';
+import { ordersModule, ordersMove, type OrdersConfig, type OrdersMove } from './example/orders.js';
+
+const CONFIG: OrdersConfig = { boardSize: 12, maxRounds: 6 };
+const SEED = new Uint8Array(32).fill(3);
+const GAME = 'a'.repeat(64) as Hex;
+
+const gm = signerFromSeed(10);
+const alice = signerFromSeed(11);
+const bob = signerFromSeed(12);
+const carol = signerFromSeed(13);
+const seats: Hex[] = [alice.pubkey, bob.pubkey, carol.pubkey];
+
+let counter = 0;
+function move(player: Hex, m: OrdersMove): ResolvedMove<OrdersMove> {
+  counter++;
+  return {
+    id: counter.toString(16).padStart(64, '0'),
+    player,
+    seat: seats.indexOf(player),
+    move: m,
+  };
+}
+
+function sampleLog(rounds = 4): GameLog<OrdersConfig, OrdersMove> {
+  counter = 0;
+  return {
+    gameId: GAME,
+    config: CONFIG,
+    seats,
+    seed: SEED,
+    rounds: Array.from({ length: rounds }, (_, i) => ({
+      now: 1_700_000_000 + i * 60,
+      moves: [
+        move(alice.pubkey, { type: 'advance', distance: 2 }),
+        move(bob.pubkey, { type: 'advance', distance: 2 }),
+        move(carol.pubkey, { type: 'hold' }),
+      ],
+    })),
+  };
+}
+
+describe('GameEngine', () => {
+  it('initialises from config, seats and seed', () => {
+    const engine = new GameEngine(ordersModule, { gameId: GAME, config: CONFIG, seats, seed: SEED });
+    expect(engine.seq).toBe(0);
+    expect(engine.isOver).toBe(false);
+    expect(Object.keys(engine.state.units)).toHaveLength(3);
+  });
+
+  it('places every player on a distinct tile', () => {
+    const engine = new GameEngine(ordersModule, { gameId: GAME, config: CONFIG, seats, seed: SEED });
+    const tiles = seats.map((s) => engine.state.units[s].tile);
+    expect(new Set(tiles).size).toBe(3);
+  });
+
+  it('orders moves itself, so a caller cannot forget', () => {
+    const engine = new GameEngine(ordersModule, { gameId: GAME, config: CONFIG, seats, seed: SEED });
+    const moves = [
+      move(alice.pubkey, { type: 'hold' }),
+      move(bob.pubkey, { type: 'hold' }),
+      move(carol.pubkey, { type: 'hold' }),
+    ];
+    const forward = engine.applyRound(moves, null, 1);
+
+    const engine2 = new GameEngine(ordersModule, { gameId: GAME, config: CONFIG, seats, seed: SEED });
+    const reversed = engine2.applyRound([...moves].reverse(), null, 1);
+
+    expect(forward.ordered.map((m) => m.id)).toEqual(reversed.ordered.map((m) => m.id));
+    expect(canonicalJson(forward.state)).toBe(canonicalJson(reversed.state));
+  });
+
+  it('advances seq and reports who acts next', () => {
+    const engine = new GameEngine(ordersModule, { gameId: GAME, config: CONFIG, seats, seed: SEED });
+    const outcome = engine.applyRound([move(alice.pubkey, { type: 'hold' })], null, 1);
+    expect(engine.seq).toBe(1);
+    expect(outcome.awaiting).toEqual(seats);
+  });
+
+  it('applies a forfeit system input', () => {
+    const engine = new GameEngine(ordersModule, { gameId: GAME, config: CONFIG, seats, seed: SEED });
+    engine.applyRound([], { type: 'forfeit', player: bob.pubkey }, 1);
+    expect(engine.state.eliminated).toContain(bob.pubkey);
+    expect(engine.awaiting).not.toContain(bob.pubkey);
+  });
+
+  it('handles a round where nobody submitted', () => {
+    // Every player timed out. A real round, not an error.
+    const engine = new GameEngine(ordersModule, { gameId: GAME, config: CONFIG, seats, seed: SEED });
+    expect(() => engine.applyRound([], null, 1)).not.toThrow();
+    expect(engine.seq).toBe(1);
+  });
+
+  it('refuses to apply a round after the game ended', () => {
+    const engine = new GameEngine(ordersModule, { gameId: GAME, config: CONFIG, seats, seed: SEED });
+    for (let i = 0; i < CONFIG.maxRounds; i++) {
+      engine.applyRound([move(alice.pubkey, { type: 'hold' })], null, i + 1);
+    }
+    expect(engine.isOver).toBe(true);
+    expect(() => engine.applyRound([], null, 99)).toThrow(/already ended/);
+  });
+
+  it('validates module rules without mutating state', () => {
+    const engine = new GameEngine(ordersModule, { gameId: GAME, config: CONFIG, seats, seed: SEED });
+    const before = canonicalJson(engine.state);
+
+    expect(engine.validate(move(alice.pubkey, { type: 'advance', distance: 2 }), 1)).toEqual({
+      ok: true,
+    });
+    expect(engine.validate(move(alice.pubkey, { type: 'advance', distance: 9 }), 1)).toEqual({
+      ok: false,
+      reason: 'bad_distance',
+    });
+    expect(canonicalJson(engine.state)).toBe(before);
+  });
+});
+
+describe('replay', () => {
+  it('reproduces the same final state every time', () => {
+    const a = replay(ordersModule, sampleLog());
+    const b = replay(ordersModule, sampleLog());
+    expect(canonicalJson(a.state)).toBe(canonicalJson(b.state));
+  });
+
+  it('is equivalent to driving the engine round by round', () => {
+    // The GM steps the engine forward; an auditor calls replay(). They must
+    // agree, because they are the same code path.
+    const log = sampleLog();
+    const folded = replay(ordersModule, log);
+
+    const engine = new GameEngine(ordersModule, log);
+    for (const round of log.rounds) engine.applyRound(round.moves, round.system ?? null, round.now);
+
+    expect(canonicalJson(folded.state)).toBe(canonicalJson(engine.state));
+  });
+
+  it('diverges when the seed differs', () => {
+    const other = { ...sampleLog(), seed: new Uint8Array(32).fill(9) };
+    expect(canonicalJson(replay(ordersModule, sampleLog()).state)).not.toBe(
+      canonicalJson(replay(ordersModule, other).state),
+    );
+  });
+
+  it('stops at the end rather than applying trailing rounds', () => {
+    const long = sampleLog(CONFIG.maxRounds + 5);
+    const result = replay(ordersModule, long);
+    expect(result.rounds.length).toBeLessThanOrEqual(CONFIG.maxRounds);
+    expect(result.result).toBeDefined();
+  });
+});
+
+describe('checkDeterminism', () => {
+  it('passes a well-behaved module', () => {
+    const report = checkDeterminism(ordersModule, sampleLog(), { checkOrderIndependence: true });
+    expect(report.findings).toEqual([]);
+    expect(report.ok).toBe(true);
+  });
+
+  it('catches a module that reads Math.random', () => {
+    const naughty = {
+      ...ordersModule,
+      apply(state: never, input: never, ctx: never) {
+        Math.random();
+        return ordersModule.apply(state, input, ctx);
+      },
+    };
+    const report = checkDeterminism(naughty as typeof ordersModule, sampleLog());
+    expect(report.ok).toBe(false);
+    expect(report.findings.map((f) => f.code)).toContain('ambient_nondeterminism');
+  });
+
+  it('catches a module that reads the clock', () => {
+    const naughty = {
+      ...ordersModule,
+      apply(state: never, input: never, ctx: never) {
+        Date.now();
+        return ordersModule.apply(state, input, ctx);
+      },
+    };
+    const report = checkDeterminism(naughty as typeof ordersModule, sampleLog());
+    expect(report.ok).toBe(false);
+    expect(report.findings.map((f) => f.code)).toContain('ambient_nondeterminism');
+  });
+
+  it('catches a module that mutates the state it was given', () => {
+    const naughty = {
+      ...ordersModule,
+      apply(state: { round: number }, input: never, ctx: never) {
+        state.round = 999; // in-place edit of the caller's state
+        return ordersModule.apply(state as never, input, ctx);
+      },
+    };
+    const report = checkDeterminism(naughty as unknown as typeof ordersModule, sampleLog());
+    expect(report.ok).toBe(false);
+    expect(report.findings.map((f) => f.code)).toContain('mutates_input');
+  });
+
+  it('catches a module that re-sorts the round in place', () => {
+    // Sorting `input.moves` in place both ignores the declared resolution order
+    // and corrupts the caller's array — the engine published that exact
+    // ordering in the delta, so an auditor would resolve a different round.
+    const naughty = {
+      ...ordersModule,
+      apply(state: never, input: { moves: ResolvedMove<OrdersMove>[] }, ctx: never) {
+        input.moves.sort((a, b) => a.seat - b.seat);
+        return ordersModule.apply(state, input as never, ctx);
+      },
+    };
+    const report = checkDeterminism(naughty as unknown as typeof ordersModule, sampleLog(), {
+      checkOrderIndependence: true,
+    });
+    expect(report.ok).toBe(false);
+    expect(report.findings.map((f) => f.code)).toContain('mutates_input');
+  });
+});
+
+describe('auditGame', () => {
+  const script: ScriptedRound<OrdersMove>[] = Array.from({ length: 4 }, () => ({
+    moves: [
+      { player: alice, move: { type: 'advance', distance: 2 } as OrdersMove, wire: ordersMove({ type: 'advance', distance: 2 }) },
+      { player: bob, move: { type: 'advance', distance: 1 } as OrdersMove, wire: ordersMove({ type: 'advance', distance: 1 }) },
+      { player: carol, move: { type: 'hold' } as OrdersMove, wire: ordersMove({ type: 'hold' }) },
+    ],
+  }));
+
+  const play = () =>
+    runScriptedGame(ordersModule, { gm, players: [alice, bob, carol], config: CONFIG, rounds: script });
+
+  it('accepts an honest game', async () => {
+    const t = await play();
+    const report = auditGame(ordersModule, {
+      gmPubkey: t.gmPubkey,
+      start: t.start,
+      states: t.states,
+      moves: t.moves,
+    });
+    expect(report.findings.filter((f) => f.severity === 'error')).toEqual([]);
+    expect(report.ok).toBe(true);
+    expect(report.rounds).toBe(4);
+  });
+
+  it('reproduces the GM’s final state exactly', async () => {
+    const t = await play();
+    const report = auditGame(ordersModule, {
+      gmPubkey: t.gmPubkey,
+      start: t.start,
+      states: t.states,
+      moves: t.moves,
+    });
+    expect(canonicalJson(report.state)).toBe(canonicalJson(t.finalState));
+  });
+
+  it('catches a tampered patch', async () => {
+    const t = await play();
+    const states = t.states.map((e) => {
+      if (!e.content.includes('"patch"')) return e;
+      const raw = JSON.parse(e.content);
+      raw.patch.round = 999;
+      return { ...e, content: JSON.stringify(raw) };
+    });
+
+    const report = auditGame(ordersModule, {
+      gmPubkey: t.gmPubkey,
+      start: t.start,
+      states,
+      moves: t.moves,
+    });
+    expect(report.ok).toBe(false);
+    // Tampering breaks the signature first, which is itself the right finding.
+    expect(report.findings.map((f) => f.code)).toContain('bad_signature');
+  });
+
+  it('catches a GM that signs a patch not matching the module', async () => {
+    // Re-sign the forged delta so the signature check passes and the divergence
+    // must be caught by re-running the module.
+    const t = await play();
+    const states: typeof t.states = [];
+    for (const e of t.states) {
+      if (!e.content.includes('"patch"')) {
+        states.push(e);
+        continue;
+      }
+      const raw = JSON.parse(e.content);
+      raw.patch.round = 999;
+      states.push(await gm.signEvent({ ...e, content: JSON.stringify(raw) }));
+    }
+
+    const report = auditGame(ordersModule, {
+      gmPubkey: t.gmPubkey,
+      start: t.start,
+      states,
+      moves: t.moves,
+    });
+    expect(report.ok).toBe(false);
+    expect(report.findings.map((f) => f.code)).toContain('patch_divergence');
+  });
+
+  it('catches a GM that publishes a plaintext the ciphertext does not support', async () => {
+    const t = await play();
+    const states: typeof t.states = [];
+    for (const e of t.states) {
+      const raw = e.content.includes('"applied"') ? JSON.parse(e.content) : null;
+      if (!raw?.applied?.length) {
+        states.push(e);
+        continue;
+      }
+      raw.applied[0].move = { type: 'advance', data: { distance: 3 } };
+      states.push(await gm.signEvent({ ...e, content: JSON.stringify(raw) }));
+    }
+
+    const report = auditGame(ordersModule, {
+      gmPubkey: t.gmPubkey,
+      start: t.start,
+      states,
+      moves: t.moves,
+    });
+    expect(report.ok).toBe(false);
+    expect(report.findings.map((f) => f.code)).toContain('reveal_mismatch');
+  });
+
+  it('catches a forged seed reveal', async () => {
+    const t = await play();
+    const states: typeof t.states = [];
+    for (const e of t.states) {
+      const raw = e.content.includes('"seed"') ? JSON.parse(e.content) : null;
+      if (!raw?.seed) {
+        states.push(e);
+        continue;
+      }
+      raw.seed = 'ab'.repeat(32);
+      states.push(await gm.signEvent({ ...e, content: JSON.stringify(raw) }));
+    }
+
+    const report = auditGame(ordersModule, {
+      gmPubkey: t.gmPubkey,
+      start: t.start,
+      states,
+      moves: t.moves,
+    });
+    expect(report.ok).toBe(false);
+    expect(report.findings.map((f) => f.code)).toContain('seed_commit_mismatch');
+  });
+
+  it('rejects a log audited against the wrong GM key', async () => {
+    const t = await play();
+    const report = auditGame(ordersModule, {
+      gmPubkey: signerFromSeed(99).pubkey,
+      start: t.start,
+      states: t.states,
+      moves: t.moves,
+    });
+    expect(report.ok).toBe(false);
+    expect(report.findings.map((f) => f.code)).toContain('wrong_author');
+  });
+
+  it('rejects a log audited against the wrong module', async () => {
+    const t = await play();
+    const other = { ...ordersModule, id: 'net.example.chess' };
+    const report = auditGame(other, {
+      gmPubkey: t.gmPubkey,
+      start: t.start,
+      states: t.states,
+      moves: t.moves,
+    });
+    expect(report.ok).toBe(false);
+    expect(report.findings.map((f) => f.code)).toContain('module_mismatch');
+  });
+
+  it('flags a broken seq chain instead of replaying a gap', async () => {
+    const t = await play();
+    const states = t.states.filter((e) => !e.content.includes('"seq":2'));
+    const report = auditGame(ordersModule, {
+      gmPubkey: t.gmPubkey,
+      start: t.start,
+      states,
+      moves: t.moves,
+    });
+    expect(report.ok).toBe(false);
+    expect(report.findings.map((f) => f.code)).toContain('seq_chain_broken');
+  });
+});

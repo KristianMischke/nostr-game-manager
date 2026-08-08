@@ -24,7 +24,7 @@ Write vectors alongside the TypeScript implementation, never after.
 | `nip44/` | The official NIP-44 v2 vectors, vendored unchanged from [paulmillr/nip44](https://github.com/paulmillr/nip44). | 129 cases |
 | `rng/` | `(seed, game_id, seq, label)` → derived bytes, `int` draws and shuffles. | 15 cases |
 | `commit/` | `(seed, salt)` → `seed_commit`, plus multi-party seed combination. | 5 cases |
-| `games/` | Full ordered input logs → expected final state, per module. Includes resolution-order cases. | milestone 4 |
+| `games/` | A full ordered input log → expected final state, per-round patches and canonical move order, for the Orders reference module. | 1 game, 6 checks |
 
 Run them with `pnpm --filter nip-gm-testing test`.
 

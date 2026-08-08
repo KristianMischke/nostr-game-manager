@@ -23,3 +23,5 @@ export * from './crypto/ephemeral.js';
 export * from './module/context.js';
 export * from './module/types.js';
 export * from './engine/ordering.js';
+export * from './engine/replay.js';
+export * from './engine/verify.js';

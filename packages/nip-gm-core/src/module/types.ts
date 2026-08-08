@@ -126,9 +126,21 @@ export interface GameModule<Config = unknown, State = unknown, Move = unknown, P
   /** Apply one ordered round. Must be pure: same inputs, same output, always. */
   apply(state: State, input: RoundInput<Move>, ctx: TurnContext): ApplyResult<State, Patch>;
 
-  /** Parse/validate untrusted move JSON off the wire. Throw or return undefined to reject. */
+  /**
+   * Parse untrusted move JSON off the wire. Return undefined to reject.
+   *
+   * `raw` is the `{ type, data }` pair from the move envelope — the protocol
+   * owns `seq` and `prev`, the module owns these two. The same shape appears in
+   * a round-closing delta's `applied[].move`, so a verifier feeds this exactly
+   * what a GM does.
+   *
+   * Be strict: this is the boundary between bytes someone published and a value
+   * your rules may assume things about. Rejecting unknown fields rather than
+   * ignoring them is what keeps two implementations of `(id, version)` from
+   * quietly diverging.
+   */
   parseMove(raw: unknown): Move | undefined;
-  /** Parse/validate module-defined lobby config. */
+  /** Parse/validate module-defined lobby config. Throw to reject. */
   parseConfig(raw: unknown): Config;
 
   /** Snapshot serialization for the game head (32602) and crash recovery. */

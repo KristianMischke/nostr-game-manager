@@ -471,10 +471,42 @@ export const myGame: GameModule<Config, State, Move, Patch> = {
 
 ---
 
-## 15. Testing before the harness exists
+## 15. Testing
 
-`nip-gm-testing`'s `runGame` and determinism checker are milestone 4–5, so write
-these two by hand now. They catch most of what goes wrong.
+The harness now exists, so the three checks below are one call:
+
+```ts
+import { checkDeterminism } from 'nip-gm-testing';
+
+const report = checkDeterminism(myGame, log, { checkOrderIndependence: true });
+expect(report.findings).toEqual([]);
+```
+
+It replays your log twice and compares; replays again with `Math.random`,
+`Date.now` and `performance.now` stubbed to throw; replays with every state and
+round deep-frozen, so any in-place mutation throws; and replays with each
+round's arrival order reversed. Findings come back as stable codes —
+`ambient_nondeterminism`, `mutates_input`, `not_reproducible`, `order_dependent`.
+
+One caveat worth taking seriously: this proves absence of the *observed*
+nondeterminism, not its impossibility. A module that branches on `Math.random()`
+once in a thousand rounds needs a log that reaches that branch. Green is
+evidence, not proof — so make your logs cover the awkward paths.
+
+There is also a **worked reference module** at
+[`packages/nip-gm-testing/src/example/orders.ts`](../packages/nip-gm-testing/src/example/orders.ts):
+a simultaneous-round game with hidden queued moves, contested tiles and a storm
+scheduled three rounds ahead. It is close in shape to what you are porting, and
+it is the thing to copy for `ctx.rng.at(landing, 'storm')` and for resolving
+collisions in canonical order.
+
+Once your module runs, `runScriptedGame` plays a full match and emits a signed
+event log, and `auditGame` verifies it exactly as a third party would.
+
+### Doing it by hand
+
+If you would rather not pull in the harness, these are the same checks written
+out.
 
 **Determinism.** Run the same log twice and compare serialized output:
 
