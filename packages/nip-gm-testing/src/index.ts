@@ -1,4 +1,6 @@
 export * from './clock.js';
+export * from './memory-signer.js';
+export * from './vectors.js';
 
 /**
  * Still to come:

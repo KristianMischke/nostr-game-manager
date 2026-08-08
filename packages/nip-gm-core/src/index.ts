@@ -13,6 +13,13 @@ export * from './codec/state.js';
 export * from './codec/head.js';
 export * from './codec/filters.js';
 
+export * from './crypto/base64.js';
+export * from './crypto/nip44.js';
+export * from './crypto/event.js';
+export * from './crypto/commit.js';
+export * from './crypto/rng.js';
+export * from './crypto/ephemeral.js';
+
 export * from './module/context.js';
 export * from './module/types.js';
 export * from './engine/ordering.js';

@@ -18,13 +18,22 @@ Write vectors alongside the TypeScript implementation, never after.
 
 ## Layout
 
-| Directory | Contents |
-|---|---|
-| `codec/` | Event ⇄ parsed struct, both directions, for every kind. Must include tag-order cases — `p` tag order is seat order. |
-| `nip44/` | The official NIP-44 vectors, vendored unchanged. |
-| `rng/` | `(seed, game_id, seq, label)` → expected derived bytes. |
-| `commit/` | `(seed, salt)` → `seed_commit`, plus verification cases. |
-| `games/` | Full ordered input logs → expected final state, per module. Includes resolution-order cases. |
+| Directory | Contents | Status |
+|---|---|---|
+| `codec/` | Event ⇄ parsed struct for every kind, including tag-order cases — `p` tag order is seat order. | 56 cases |
+| `nip44/` | The official NIP-44 v2 vectors, vendored unchanged from [paulmillr/nip44](https://github.com/paulmillr/nip44). | 129 cases |
+| `rng/` | `(seed, game_id, seq, label)` → derived bytes, `int` draws and shuffles. | 15 cases |
+| `commit/` | `(seed, salt)` → `seed_commit`, plus multi-party seed combination. | 5 cases |
+| `games/` | Full ordered input logs → expected final state, per module. Includes resolution-order cases. | milestone 4 |
+
+Run them with `pnpm --filter nip-gm-testing test`.
+
+Two different kinds of vector live here, and they carry different authority.
+`nip44/` is an **external** corpus: it is the interoperability contract with
+every other Nostr implementation, and our code is wrong if it disagrees. The
+rest are **ours** — generated from this implementation to pin constructions that
+are otherwise only described in prose (see the `note` field in each file). A
+change to those is a protocol change, never a refactor.
 
 ## Conventions
 

@@ -1,0 +1,491 @@
+{
+  "note": "prk = HKDF-Extract(SHA-256, ikm=seed, salt=utf8(\"nip-gm-rng-v1\")); streamKey = HKDF-Expand(SHA-256, prk, info=utf8(`${game_id}|${seq}|${label}`), L=32); block(i) = HMAC-SHA256(streamKey, uint32be(i)); stream = block(0) || block(1) || ...",
+  "fields": {
+    "bytes_64": "first 64 bytes of a fresh stream at this address",
+    "int_6_from_start": "five int(6) draws from a fresh stream",
+    "int_6_after_64_bytes": "five int(6) draws after first consuming 64 bytes — pins continuation across HMAC block boundaries",
+    "shuffle_8_from_start": "shuffle([0..7]) on a fresh stream"
+  },
+  "cases": [
+    {
+      "seed": "0000000000000000000000000000000000000000000000000000000000000001",
+      "seed_name": "seed_01",
+      "game_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "seq": 0,
+      "label": "deal",
+      "bytes_64": "f90d7ff5f4a999ca7ddf2257764a22d2652f2a05153a6240931cb564b4eb97de94d466a09372d4a554503576c31a50ad9e6b3719f27f9f583bb5bb7f7902da2a",
+      "int_6_from_start": [
+        1,
+        0,
+        1,
+        4,
+        3
+      ],
+      "int_6_after_64_bytes": [
+        5,
+        0,
+        1,
+        4,
+        4
+      ],
+      "shuffle_8_from_start": [
+        2,
+        0,
+        6,
+        4,
+        7,
+        1,
+        3,
+        5
+      ]
+    },
+    {
+      "seed": "0000000000000000000000000000000000000000000000000000000000000001",
+      "seed_name": "seed_01",
+      "game_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "seq": 1,
+      "label": "deal",
+      "bytes_64": "1fa86f46622b337537b16664dac68f2493fd1d4d2b5e0c6967f7719772f114929e9767d4a4fc494a0708a045145526f5931722eaf6e32ee0c930dd8631e1f321",
+      "int_6_from_start": [
+        2,
+        3,
+        2,
+        4,
+        5
+      ],
+      "int_6_after_64_bytes": [
+        2,
+        5,
+        3,
+        2,
+        4
+      ],
+      "shuffle_8_from_start": [
+        4,
+        3,
+        5,
+        7,
+        0,
+        2,
+        1,
+        6
+      ]
+    },
+    {
+      "seed": "0000000000000000000000000000000000000000000000000000000000000001",
+      "seed_name": "seed_01",
+      "game_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "seq": 1,
+      "label": "order",
+      "bytes_64": "cd7305033782a23293bf7f5edd3c4091e813e3a5b9ea9450bdedd7e7a71e25856ebdacd3396e4cee4e1e5a6d96e8536f9c8c5da75bcb63dc96d76b5aadd6cb7c",
+      "int_6_from_start": [
+        1,
+        4,
+        4,
+        1,
+        1
+      ],
+      "int_6_after_64_bytes": [
+        3,
+        3,
+        0,
+        3,
+        4
+      ],
+      "shuffle_8_from_start": [
+        6,
+        7,
+        2,
+        1,
+        0,
+        4,
+        5,
+        3
+      ]
+    },
+    {
+      "seed": "0000000000000000000000000000000000000000000000000000000000000001",
+      "seed_name": "seed_01",
+      "game_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "seq": 8,
+      "label": "storm",
+      "bytes_64": "fabf5e194c9ce54af5318563e7558afe82f6c13366cbf7957d13494da34e6b50bf759a39a565f24e5f96366a886eadfdcad3d80e94ccbdbe8dbb3f691cf47bd3",
+      "int_6_from_start": [
+        5,
+        4,
+        1,
+        0,
+        5
+      ],
+      "int_6_after_64_bytes": [
+        3,
+        3,
+        0,
+        0,
+        0
+      ],
+      "shuffle_8_from_start": [
+        0,
+        5,
+        2,
+        4,
+        3,
+        7,
+        6,
+        1
+      ]
+    },
+    {
+      "seed": "0000000000000000000000000000000000000000000000000000000000000001",
+      "seed_name": "seed_01",
+      "game_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "seq": 4294967295,
+      "label": "far",
+      "bytes_64": "5f0ec72265ac3af7b3546d81eedfb3f7fe1940ad032d6a0b9b3ebd0c6f2b0392fa1fb23d539144153bc3a803557f87109c6082bf20d9dddf2324231e5282b00b",
+      "int_6_from_start": [
+        0,
+        5,
+        3,
+        5,
+        3
+      ],
+      "int_6_after_64_bytes": [
+        5,
+        1,
+        3,
+        4,
+        1
+      ],
+      "shuffle_8_from_start": [
+        5,
+        4,
+        6,
+        1,
+        7,
+        3,
+        0,
+        2
+      ]
+    },
+    {
+      "seed": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "seed_name": "seed_ff",
+      "game_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "seq": 0,
+      "label": "deal",
+      "bytes_64": "d0ba8009331c53f450ce8a7939e345259211a728461359164340bba6c5118b29873131b26b5765e31e38ebe7ceaf93f28a11c5d4580147ce9a45ba1ad69876ec",
+      "int_6_from_start": [
+        3,
+        4,
+        5,
+        3,
+        4
+      ],
+      "int_6_after_64_bytes": [
+        4,
+        4,
+        3,
+        3,
+        0
+      ],
+      "shuffle_8_from_start": [
+        7,
+        3,
+        2,
+        6,
+        0,
+        5,
+        4,
+        1
+      ]
+    },
+    {
+      "seed": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "seed_name": "seed_ff",
+      "game_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "seq": 1,
+      "label": "deal",
+      "bytes_64": "937b08a6290b946932ff72f07b0a27d70b4827918f78c93ab54dd97c8163901f12d22a701dcabc67668e7656ad23cb75a34563d18f62a7800d6a8f68cfd6cdd2",
+      "int_6_from_start": [
+        0,
+        5,
+        2,
+        3,
+        3
+      ],
+      "int_6_after_64_bytes": [
+        5,
+        1,
+        0,
+        1,
+        2
+      ],
+      "shuffle_8_from_start": [
+        3,
+        7,
+        0,
+        1,
+        5,
+        2,
+        4,
+        6
+      ]
+    },
+    {
+      "seed": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "seed_name": "seed_ff",
+      "game_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "seq": 1,
+      "label": "order",
+      "bytes_64": "f90cbdc992e07383d2989cfbf70e8e9e5e172f8eaef0e5d16a5537598b4270cab31a3e6f235825b473f83f2e9b2a34b963f845c8e41b130bf3f41b92fef455d1",
+      "int_6_from_start": [
+        3,
+        1,
+        1,
+        0,
+        0
+      ],
+      "int_6_after_64_bytes": [
+        2,
+        4,
+        0,
+        2,
+        4
+      ],
+      "shuffle_8_from_start": [
+        3,
+        4,
+        0,
+        6,
+        5,
+        7,
+        2,
+        1
+      ]
+    },
+    {
+      "seed": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "seed_name": "seed_ff",
+      "game_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "seq": 8,
+      "label": "storm",
+      "bytes_64": "2c2596adc9d9567a0c5c0cb4ae47eb257ae4e0822942a9768838ff979e623ec9588d850ae7812752710ed74a800637dc64d40e9511218010c8ef056deca2e0c2",
+      "int_6_from_start": [
+        5,
+        2,
+        2,
+        1,
+        2
+      ],
+      "int_6_after_64_bytes": [
+        3,
+        1,
+        1,
+        4,
+        5
+      ],
+      "shuffle_8_from_start": [
+        0,
+        3,
+        1,
+        4,
+        7,
+        6,
+        2,
+        5
+      ]
+    },
+    {
+      "seed": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "seed_name": "seed_ff",
+      "game_id": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "seq": 4294967295,
+      "label": "far",
+      "bytes_64": "399fdbba42b3102bb64fde30dfb9cf0674c506622d6c0e899c2c7b09a33076007214967e1304889a25c8d607c6b46334f3b985fd49c57c61bd6ee360769abc93",
+      "int_6_from_start": [
+        0,
+        1,
+        0,
+        0,
+        0
+      ],
+      "int_6_after_64_bytes": [
+        4,
+        4,
+        5,
+        0,
+        1
+      ],
+      "shuffle_8_from_start": [
+        5,
+        3,
+        4,
+        7,
+        1,
+        0,
+        6,
+        2
+      ]
+    },
+    {
+      "seed": "0000000000000000000000000000000000000000000000000000000000000001",
+      "seed_name": "seed_01",
+      "game_id": "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36",
+      "seq": 0,
+      "label": "deal",
+      "bytes_64": "597a32d1614a6a279c0e913e70c3c41e6b4f834df1e3439d20b56a2e540a22bd8da37614bbc44a301d7fbe02a475b6a48e7004afff03e7602045c0eedcc9b61f",
+      "int_6_from_start": [
+        5,
+        1,
+        2,
+        2,
+        1
+      ],
+      "int_6_after_64_bytes": [
+        0,
+        5,
+        5,
+        3,
+        0
+      ],
+      "shuffle_8_from_start": [
+        4,
+        0,
+        5,
+        6,
+        3,
+        2,
+        7,
+        1
+      ]
+    },
+    {
+      "seed": "0000000000000000000000000000000000000000000000000000000000000001",
+      "seed_name": "seed_01",
+      "game_id": "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36",
+      "seq": 1,
+      "label": "deal",
+      "bytes_64": "3cfec0a73874658cd19f282e3df858abd7807123947445a828d35996338061e840ca75ee6283c06c745c9720a13cb9a2d38956f000028768de2d0f2fbb9fb19d",
+      "int_6_from_start": [
+        1,
+        2,
+        4,
+        1,
+        5
+      ],
+      "int_6_after_64_bytes": [
+        0,
+        2,
+        2,
+        5,
+        4
+      ],
+      "shuffle_8_from_start": [
+        1,
+        2,
+        0,
+        5,
+        3,
+        4,
+        6,
+        7
+      ]
+    },
+    {
+      "seed": "0000000000000000000000000000000000000000000000000000000000000001",
+      "seed_name": "seed_01",
+      "game_id": "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36",
+      "seq": 1,
+      "label": "order",
+      "bytes_64": "eb47cd8c7a3f1d9298ce51a91542ad2280f1589036d6a1cef5b9a19114f1dc9d9f58b34cf066893a0cc3261a85e0c215074179ee660a9559b38d46c299847443",
+      "int_6_from_start": [
+        0,
+        0,
+        5,
+        0,
+        4
+      ],
+      "int_6_after_64_bytes": [
+        0,
+        1,
+        2,
+        5,
+        3
+      ],
+      "shuffle_8_from_start": [
+        3,
+        1,
+        2,
+        0,
+        7,
+        5,
+        6,
+        4
+      ]
+    },
+    {
+      "seed": "0000000000000000000000000000000000000000000000000000000000000001",
+      "seed_name": "seed_01",
+      "game_id": "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36",
+      "seq": 8,
+      "label": "storm",
+      "bytes_64": "b485ecde8a708a88e2b076439e1906b2bd0a89068c0ada7c5fbea5d9237211f1421f220bf9ca27fc2b8f0c2ce3176d89b6785bc4b5d45357d837f56e2a53ac34",
+      "int_6_from_start": [
+        0,
+        2,
+        5,
+        4,
+        0
+      ],
+      "int_6_after_64_bytes": [
+        5,
+        5,
+        3,
+        5,
+        5
+      ],
+      "shuffle_8_from_start": [
+        3,
+        1,
+        7,
+        4,
+        2,
+        5,
+        0,
+        6
+      ]
+    },
+    {
+      "seed": "0000000000000000000000000000000000000000000000000000000000000001",
+      "seed_name": "seed_01",
+      "game_id": "5c83da77af1dec6d7289834998ad7aafbd9e2191396d75ec3cc27f5a77226f36",
+      "seq": 4294967295,
+      "label": "far",
+      "bytes_64": "aa6c937cc171aeda5d7b5a2124b843f577be057e5d43f6950d94c5884a4d1baec1ff91b3df097df4bb415a6d71b0c3d8b4bcab95379cc822669eb3c5cc2dba6c",
+      "int_6_from_start": [
+        0,
+        2,
+        3,
+        1,
+        2
+      ],
+      "int_6_after_64_bytes": [
+        0,
+        2,
+        4,
+        3,
+        4
+      ],
+      "shuffle_8_from_start": [
+        1,
+        5,
+        0,
+        7,
+        2,
+        6,
+        3,
+        4
+      ]
+    }
+  ]
+}

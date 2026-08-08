@@ -1,0 +1,35 @@
+{
+  "note": "commit = sha256(seed || salt), hex. combineSeeds = sha256(gm_seed || concat(pubkey||seed for each player, ascending pubkey order)).",
+  "commits": [
+    {
+      "seed": "0000000000000000000000000000000000000000000000000000000000000000",
+      "salt": "0000000000000000000000000000000000000000000000000000000000000000",
+      "commit": "f5a5fd42d16a20302798ef6ed309979b43003d2320d9f0e8ea9831a92759fb4b"
+    },
+    {
+      "seed": "0000000000000000000000000000000000000000000000000000000000000001",
+      "salt": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "commit": "4ab9077c34a6903bc59693414a4fe8ccf275d93f2daacd849574933737c27757"
+    },
+    {
+      "seed": "abababababababababababababababababababababababababababababababab",
+      "salt": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd",
+      "commit": "a6a96ccb5233f068bf41343ffd5984bf8d4d7e591f1e4bdb12bda296534409b8"
+    }
+  ],
+  "combined": [
+    {
+      "gm_seed": "0000000000000000000000000000000000000000000000000000000000000001",
+      "player_seeds": {},
+      "effective": "ec4916dd28fc4c10d78e287ca5d9cc51ee1ae73cbfde08c6b37324cbfaac8bc5"
+    },
+    {
+      "gm_seed": "0000000000000000000000000000000000000000000000000000000000000001",
+      "player_seeds": {
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "0101010101010101010101010101010101010101010101010101010101010101",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb": "0202020202020202020202020202020202020202020202020202020202020202"
+      },
+      "effective": "729187d5e4ff4f612baec6aff276aa3a63376ed039f753bed2e1e5cab2222490"
+    }
+  ]
+}
