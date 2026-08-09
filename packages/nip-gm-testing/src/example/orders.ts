@@ -60,12 +60,29 @@ export interface OrdersState {
   storms: { at: number; tile: number }[];
 }
 
+/**
+ * What a client may see: the same shape as {@link OrdersState}, but `storms`
+ * holds only storms that have already landed. Identical types, different
+ * knowledge — which is the normal situation in a hidden-information game and the
+ * reason `applyPatch` folds a view rather than a state.
+ */
+export type OrdersView = OrdersState;
+
 export type OrdersMove = { type: 'advance'; distance: number } | { type: 'hold' };
 
 export interface Resolution {
   player: Hex;
   action: 'advance' | 'hold' | 'bounced';
   tile: number;
+  /**
+   * Energy after the move resolved.
+   *
+   * Carried rather than left to the client to recompute: a `bounced` resolution
+   * does not say how far the player tried to go, so a viewer folding patches
+   * could not derive what was paid. A patch that leaves the view guessing is an
+   * under-specified patch — see {@link GameModule.applyPatch}.
+   */
+  energy: number;
 }
 
 export interface OrdersPatch {
@@ -151,7 +168,7 @@ export const ordersModule: GameModule<OrdersConfig, OrdersState, OrdersMove, Ord
 
       if (move.type === 'hold') {
         unit.energy += 2;
-        resolved.push({ player, action: 'hold', tile: unit.tile });
+        resolved.push({ player, action: 'hold', tile: unit.tile, energy: unit.energy });
         continue;
       }
 
@@ -162,11 +179,11 @@ export const ordersModule: GameModule<OrdersConfig, OrdersState, OrdersMove, Ord
         // Someone earlier in resolution order already holds the tile. Bounce,
         // and pay anyway — a move that became impossible is a rule, not an error.
         unit.energy = Math.max(0, unit.energy - move.distance);
-        resolved.push({ player, action: 'bounced', tile: unit.tile });
+        resolved.push({ player, action: 'bounced', tile: unit.tile, energy: unit.energy });
       } else {
         unit.energy -= move.distance;
         unit.tile = dest;
-        resolved.push({ player, action: 'advance', tile: dest });
+        resolved.push({ player, action: 'advance', tile: dest, energy: unit.energy });
       }
     }
 
@@ -213,6 +230,36 @@ export const ordersModule: GameModule<OrdersConfig, OrdersState, OrdersMove, Ord
     };
   },
 
+  /**
+   * The public projection: everything except storms that have not landed yet.
+   *
+   * Scheduling a storm three rounds ahead is the module's whole
+   * hidden-information mechanic, so this is not decoration — publishing the full
+   * state in a head snapshot would hand every player the storm tile in advance
+   * and quietly delete the game.
+   */
+  redact(state: OrdersState, _viewer: Hex | undefined): OrdersView {
+    return { ...state, storms: state.storms.filter((s) => s.at <= state.round) };
+  },
+
+  applyPatch(view: unknown, patch: OrdersPatch): OrdersView {
+    const current = view as OrdersView;
+    const units = { ...current.units };
+    for (const r of patch.resolved) units[r.player] = { tile: r.tile, energy: r.energy };
+
+    return {
+      config: current.config,
+      round: patch.round,
+      units,
+      // The full list every time, so a viewer that missed a delta and
+      // resynced from the head is not left with a stale set.
+      eliminated: [...patch.eliminated],
+      storms: patch.storm
+        ? [...current.storms, { at: patch.round, tile: patch.storm.tile }]
+        : current.storms,
+    };
+  },
+
   parseMove(raw: unknown): OrdersMove | undefined {
     if (typeof raw !== 'object' || raw === null) return undefined;
     const { type, data } = raw as { type?: unknown; data?: unknown };
@@ -228,6 +275,10 @@ export const ordersModule: GameModule<OrdersConfig, OrdersState, OrdersMove, Ord
     }
 
     return undefined;
+  },
+
+  encodeMove(move: OrdersMove): { type: string; data: unknown } {
+    return ordersMove(move);
   },
 
   parseConfig(raw: unknown): OrdersConfig {

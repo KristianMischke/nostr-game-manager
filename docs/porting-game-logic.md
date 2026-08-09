@@ -257,6 +257,13 @@ how clients know to prompt and how async players get notified across games
 (NIP-GM §Deltas). For a game where everyone acts every tick, this is usually
 "every player still alive". Return `[]` when the game has ended.
 
+**Round 1 is the exception**, because there is no previous delta to carry it.
+`awaitingAtStart(seats)` supplies it, defaulting to every seat — which is what a
+simultaneous game wants, so most modules omit it. A turn-taking game returns
+`[seats[0]]`. It takes only seat order and no state, deliberately: it is never
+published in an event, so every client and auditor has to be able to derive it
+from the signed start event alone.
+
 ---
 
 ## 8. Randomness
@@ -335,24 +342,66 @@ happened to them.
 
 ---
 
-## 10. Patches
+## 10. Patches, views, and the client's half of the module
 
-`patch` is what clients apply to their copy of the state instead of re-running
+`patch` is what clients fold into their copy of the game instead of re-running
 your module. It is module-defined; the protocol just carries it.
 
-Options, roughly in order of how much I would reach for them:
+**A client cannot re-run your module while a game is live.** Replay needs the
+seed, and the seed is committed at start and revealed only at the end — that is
+the entire point of the commitment. So between start and end, the patch is the
+*only* path from one public state to the next, and your players' UI is exactly
+as good as what the patch carries. This is not an optimisation you can defer.
+
+Three methods make up the client's half of the contract:
+
+| method | what it does | needed for |
+| --- | --- | --- |
+| `redact(state, viewer)` | the public projection of your state | head snapshots, client bootstrap |
+| `applyPatch(view, patch)` | fold one delta into that projection | following a live game |
+| `encodeMove(move)` | `parseMove`'s inverse | submitting a move |
+
+### The view is not the state
+
+`applyPatch` folds what `redact` produced, not your `State`, and it is typed
+`unknown` for exactly that reason — cast it, the way `deserialize` already does.
+In a hidden-information game the GM holds things no client may see. The Orders
+example schedules a storm three rounds before it lands: if `redact` returned the
+whole state, the head snapshot would hand every player the storm tile in advance
+and delete the game's only hidden mechanic.
+
+So the invariant is *not* "patch applied to state equals the new state". It is:
+
+> folding every patch in order onto `redact(initialState)` yields
+> `redact(finalState)`.
+
+### A patch must be sufficient on its own
+
+The trap is a patch that is meaningful only to someone who already knows the
+hidden state. Orders' `Resolution` carries post-move `energy` for this reason:
+a `bounced` result does not say how far the player *tried* to go, so a viewer
+could not derive what was paid. Without that field the patch is under-specified,
+and no amount of cleverness in `applyPatch` fixes it — the information is not
+there.
+
+When choosing a shape, roughly in order of how much I would reach for them:
 
 1. **A semantic diff of your own** — `{ moved: [...], destroyed: [...], scores: {...} }`.
    Compact, and your UI can animate from it, which a structural diff cannot.
 2. **RFC 7386 merge patch** — trivial to apply, but cannot express array edits or
    deletions cleanly.
-3. **The whole state** — start here if the state is small. Correct, boring, and
+3. **The whole redacted view** — start here if it is small. Correct, boring, and
    you can optimise later without a protocol change.
 
-Whatever you choose, `apply(state, round).patch` applied to `state` must yield
-exactly `apply(state, round).state`. Clients that trust the patch and auditors
-that re-run the module have to agree, or you get spurious divergence reports.
-Property-test this the moment you have more than one patch shape.
+Property-test the fold against the replayed state the moment you have more than
+one patch shape. A client that quietly drifts from the GM is the hardest bug in
+this system to notice, because nothing errors: the board is just wrong.
+
+### `encodeMove`
+
+`parseMove(encodeMove(m))` must deep-equal `m`. Keeping both halves in the module
+is what stops a client's encoding drifting from the GM's parser and having every
+move rejected by a GM that is behaving perfectly correctly.
 
 ---
 
@@ -496,6 +545,24 @@ export const myGame: GameModule<Config, State, Move, Patch> = {
     };
   },
 
+  // --- the client's half (§10) ------------------------------------------
+  // Without these a UI cannot follow the game or submit to it.
+
+  // What a player or spectator may see. Anything scheduled but not yet
+  // resolved stays out, or the head snapshot leaks the future.
+  redact(state: State, _viewer: string | undefined): View {
+    return { ...state, scheduled: state.scheduled.filter((s) => s.at <= state.round) };
+  },
+
+  applyPatch(view: unknown, patch: Patch): View {
+    const current = view as View;
+    const units = { ...current.units };
+    for (const r of patch.resolved) units[r.player] = unitFrom(r);
+    return { ...current, round: patch.round, units, eliminated: [...patch.eliminated] };
+  },
+
+  encodeMove(move: Move) { return { type: 'orders', data: { orders: move.orders } }; },
+
   parseMove(raw) { /* strict validation, return undefined to reject */ },
   parseConfig(raw) { /* strict validation, throw to reject */ },
   serialize: (s) => s,
@@ -592,7 +659,11 @@ myGame.apply(deepFreeze(state), round, ctx);
 - [ ] All randomness via `ctx.rng.at(seq, label)`, with stable labels
 - [ ] Scheduled randomness addressed by the round it lands on
 - [ ] No banned calls from §12 anywhere in the module or its imports
-- [ ] Patch application equals recomputed state
+- [ ] `redact` withholds everything scheduled but not yet resolved
+- [ ] Folding every patch onto `redact(init)` equals `redact(final)`
+- [ ] Each patch is sufficient on its own — no field a viewer would have to guess
+- [ ] `parseMove(encodeMove(m))` deep-equals `m`
+- [ ] `awaitingAtStart` set if round 1 does not await every seat
 - [ ] `awaiting` is `[]` exactly when the game has ended
 - [ ] Determinism, order-independence and purity tests green
 

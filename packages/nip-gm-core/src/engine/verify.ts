@@ -161,7 +161,14 @@ export function auditGame<Config, State, Move, Patch>(
 
   /* --- sort state events, verify authorship ----------------------------- */
 
-  const deltas: GameDelta[] = [];
+  /**
+   * Deltas carry their own `created_at`, because that is the `now` the GM
+   * applied the round with and replay must use the same value. It is
+   * GM-asserted and unverifiable — which is why a module reading `ctx.now` is
+   * trusting the GM about time — but it is signed, and substituting anything
+   * else here would make every time-sensitive module diverge on replay.
+   */
+  const deltas: (GameDelta & { createdAt: number })[] = [];
   let end: GameEnd | undefined;
 
   for (const event of input.states) {
@@ -178,7 +185,9 @@ export function auditGame<Config, State, Move, Patch>(
       error('bad_state_event', `state event did not parse: ${parsed.error}`);
       continue;
     }
-    if (parsed.value.type === 'delta') deltas.push(parsed.value);
+    if (parsed.value.type === 'delta') {
+      deltas.push({ ...parsed.value, createdAt: event.created_at });
+    }
     else if (parsed.value.type === 'end' || parsed.value.type === 'abort') end = parsed.value;
   }
 
@@ -314,7 +323,7 @@ export function auditGame<Config, State, Move, Patch>(
 
     let outcome;
     try {
-      outcome = engine.applyRound(resolved, delta.content.system as never, delta.seq);
+      outcome = engine.applyRound(resolved, delta.content.system as never, delta.createdAt);
     } catch (e) {
       error('replay_threw', `module threw while applying round: ${(e as Error).message}`, seq);
       return done(rounds, engine.state);

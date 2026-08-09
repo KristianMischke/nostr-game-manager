@@ -16,11 +16,12 @@ export function gameFilter(
   options: { mode?: PersistenceMode; includeMessages?: boolean } = {},
 ): Filter {
   const mode = options.mode ?? 'verified';
+  // Both modes include the ephemeral state kind: `status` rides it regardless of
+  // mode, so a verified-mode client that filtered it out would never learn the
+  // GM had received its move.
   const kinds = options.includeMessages
     ? gameKinds(mode)
-    : mode === 'casual'
-      ? [KIND.STATE_EPHEMERAL, KIND.STATE]
-      : [KIND.STATE];
+    : [KIND.STATE, KIND.STATE_EPHEMERAL];
   return { kinds, '#e': [gameId] };
 }
 

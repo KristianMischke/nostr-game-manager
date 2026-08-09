@@ -68,6 +68,10 @@ export class GameEngine<Config, State, Move, Patch> {
       seats: this.seats,
       rng: this.rng,
     });
+
+    // Round 1 has no preceding delta to say who acts, so the module declares it.
+    // Every later round takes `awaiting` from the round before.
+    this.currentAwaiting = module.awaitingAtStart?.(this.seats) ?? [...this.seats];
   }
 
   get state(): State {

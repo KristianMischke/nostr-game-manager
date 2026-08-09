@@ -5,7 +5,9 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "_bin_pending": "Restore `\"bin\": { \"nip-gm\": \"./dist/bin/gm.js\" }` when milestone 5 adds src/bin/gm.ts.",
+  "bin": {
+    "nip-gm": "./dist/bin/gm.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -23,7 +25,8 @@
   },
   "license": "MIT",
   "dependencies": {
-    "nip-gm-core": "workspace:*"
+    "nip-gm-core": "workspace:*",
+    "@noble/hashes": "^1.7.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

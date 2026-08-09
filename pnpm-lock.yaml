@@ -58,6 +58,9 @@ importers:
 
   packages/nip-gm-gm:
     dependencies:
+      '@noble/hashes':
+        specifier: ^1.7.1
+        version: 1.8.0
       nip-gm-core:
         specifier: workspace:*
         version: link:../nip-gm-core

@@ -120,11 +120,47 @@ export interface GameModule<Config = unknown, State = unknown, Move = unknown, P
 
   init(ctx: InitContext<Config>): State;
 
+  /**
+   * Who the *first* round awaits. Defaults to every seat.
+   *
+   * Every later round's actors come from the previous round's `awaiting`, but
+   * round 1 has no previous round, and the start event's `p` tags are seat
+   * order — a roster, not a summons. A simultaneous game wants the default; a
+   * turn-taking game returns `[seats[0]]`.
+   *
+   * Deliberately a function of seat order alone, with no access to state: it is
+   * never published in an event, so every client and auditor must be able to
+   * derive it from the signed start event without knowing anything secret.
+   */
+  awaitingAtStart?(seats: readonly Hex[]): Hex[];
+
   /** Legality of a single move, checked before it enters a round. */
   validate(state: State, move: ResolvedMove<Move>, ctx: TurnContext): ValidationResult;
 
   /** Apply one ordered round. Must be pure: same inputs, same output, always. */
   apply(state: State, input: RoundInput<Move>, ctx: TurnContext): ApplyResult<State, Patch>;
+
+  /**
+   * Fold a published patch into a client's view of the game.
+   *
+   * **Required for live play.** A client cannot simply replay the module
+   * instead: replay needs the seed, and the seed is not revealed until the game
+   * ends. Between start and end, patches are the only path from one public
+   * state to the next.
+   *
+   * The value being folded is what {@link GameModule.redact} produces, not the
+   * GM's `State`. In a hidden-information game the GM holds things no client may
+   * see — Orders schedules storms three rounds before they land — so a client
+   * maintaining the full `State` would have to be either wrong or told secrets.
+   * It is typed `unknown` for that reason and cast inside the module, exactly as
+   * `deserialize` already is.
+   *
+   * The corollary for a module author: **a patch must carry everything a viewer
+   * needs to advance their view.** If applying a patch leaves the view guessing
+   * — Orders would, if `Resolution` did not carry post-move `energy` — the
+   * patch is under-specified, and no amount of client cleverness fixes it.
+   */
+  applyPatch?(view: unknown, patch: Patch): unknown;
 
   /**
    * Parse untrusted move JSON off the wire. Return undefined to reject.
@@ -140,6 +176,17 @@ export interface GameModule<Config = unknown, State = unknown, Move = unknown, P
    * quietly diverging.
    */
   parseMove(raw: unknown): Move | undefined;
+
+  /**
+   * The inverse of {@link GameModule.parseMove}: a move as it goes on the wire.
+   *
+   * **Required for a client to play.** Without it every client reinvents the
+   * encoding, and the moment one drifts from `parseMove` its moves are rejected
+   * by a GM that is behaving correctly. Keeping both halves in the module is
+   * what makes `parseMove(encodeMove(m))` a property a port can test.
+   */
+  encodeMove?(move: Move): { type: string; data: unknown };
+
   /** Parse/validate module-defined lobby config. Throw to reject. */
   parseConfig(raw: unknown): Config;
 

@@ -144,7 +144,6 @@
   ],
   "expected": {
     "final_seq": 4,
-    "result": null,
     "ordered_move_ids": [
       [
         "0000000000000000000000000000000000000000000000000000000000000003",
@@ -169,95 +168,107 @@
     ],
     "patches": [
       {
-        "round": 1,
+        "eliminated": [],
         "resolved": [
           {
-            "player": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
             "action": "hold",
+            "energy": 7,
+            "player": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
             "tile": 5
           },
           {
-            "player": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "action": "advance",
+            "energy": 3,
+            "player": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "tile": 0
           },
           {
-            "player": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "action": "bounced",
+            "energy": 3,
+            "player": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "tile": 3
           }
         ],
-        "storm": null,
-        "eliminated": []
+        "round": 1,
+        "storm": null
       },
       {
-        "round": 2,
+        "eliminated": [],
         "resolved": [
           {
-            "player": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "action": "hold",
+            "energy": 5,
+            "player": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "tile": 3
           },
           {
-            "player": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
             "action": "advance",
+            "energy": 4,
+            "player": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
             "tile": 8
           },
           {
-            "player": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "action": "advance",
+            "energy": 2,
+            "player": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "tile": 1
           }
         ],
-        "storm": null,
-        "eliminated": []
+        "round": 2,
+        "storm": null
       },
       {
-        "round": 3,
+        "eliminated": [],
         "resolved": [
           {
-            "player": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "action": "advance",
+            "energy": 2,
+            "player": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "tile": 6
           },
           {
-            "player": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "action": "hold",
+            "energy": 4,
+            "player": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "tile": 1
           },
           {
-            "player": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
             "action": "advance",
+            "energy": 3,
+            "player": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
             "tile": 9
           }
         ],
-        "storm": null,
-        "eliminated": []
+        "round": 3,
+        "storm": null
       },
       {
-        "round": 4,
+        "eliminated": [],
         "resolved": [
           {
-            "player": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "action": "advance",
+            "energy": 1,
+            "player": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "tile": 7
           },
           {
-            "player": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "action": "advance",
+            "energy": 2,
+            "player": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
             "tile": 3
           },
           {
-            "player": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
             "action": "hold",
+            "energy": 5,
+            "player": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
             "tile": 9
           }
         ],
+        "round": 4,
         "storm": {
-          "tile": 6,
-          "killed": []
-        },
-        "eliminated": []
+          "killed": [],
+          "tile": 6
+        }
       }
     ],
     "awaiting": [

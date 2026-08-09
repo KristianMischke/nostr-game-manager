@@ -22,38 +22,12 @@
  * — while `bin/gm.ts` wraps the same call for the config-file case, resolving
  * module packages by name so a published module can be hosted without writing
  * any code.
+ *
+ * The GM key never belongs in committed configuration. `bin/gm.ts` reads it from
+ * `GM_NSEC` or a key file for that reason, and the config schema has no field
+ * for it at all.
  */
-import type { AnyGameModule, Clock, KeySigner, Transport } from 'nip-gm-core';
-
-export interface GMPolicy {
-  /** Who may ask this GM to open a lobby (NIP-GM §Game Messages — GM policy). */
-  allowCreate: 'anyone' | 'allowlist' | 'nobody';
-  allowlist?: string[];
-  /** Omit for unlimited. */
-  maxConcurrentGames?: number;
-}
-
-export interface GMOptions {
-  modules: AnyGameModule[];
-  /**
-   * Must be a KeySigner, not a plain Signer: the GM reveals raw NIP-44
-   * conversation keys in round-closing deltas, so it needs a local key. A
-   * NIP-46 remote signer cannot host a game.
-   */
-  signer: KeySigner;
-  transport: Transport;
-  relays: string[];
-  policy: GMPolicy;
-  /** Injected so tests run instantly and wall-clock never leaks into replay. */
-  clock?: Clock;
-}
-
-export interface GM {
-  start(): Promise<void>;
-  stop(): Promise<void>;
-}
-
-/** Not yet implemented — milestone 5. The signature is the contract the rest of the plan builds toward. */
-export function createGM(_options: GMOptions): GM {
-  throw new Error('createGM is not implemented yet (milestone 5: GM runner).');
-}
+export * from './policy.js';
+export * from './lobby-manager.js';
+export * from './runner.js';
+export * from './gm.js';

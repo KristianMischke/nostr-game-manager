@@ -6,8 +6,12 @@
  * collect per-round encrypted moves, close rounds with revealed keys, publish
  * the end reveal — but synchronously and with no relay involved.
  *
- * Milestone 5 replaces the orchestration with the real daemon; the event log it
- * produces should be indistinguishable.
+ * The real daemon now exists (`nip-gm-gm`, exercised end to end in
+ * `session.test.ts`), and this is deliberately *not* retired in its favour. The
+ * two test different things: the daemon proves the protocol works when a GM
+ * behaves, while this harness scripts the log directly and so can produce logs a
+ * correct GM would never emit — a hidden revision, a stale winner, a forged
+ * plaintext. Auditing is only meaningfully tested against those.
  */
 import {
   buildDelta,
