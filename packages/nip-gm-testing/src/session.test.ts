@@ -487,6 +487,34 @@ describe('spectators and head snapshots', () => {
 
     for (const session of sessions) session.close();
   });
+
+  it('bootstraps a session from the head verbatim, without deserializing it', async () => {
+    const table = await seat(2);
+    const gameId = await startGame(table);
+
+    const session = createGameSession<OrdersView, OrdersMove>({
+      transport: table.relay,
+      module: ordersModule,
+      gm: table.gmSigner.pubkey,
+      gameId,
+      clock: table.clock,
+    });
+    await session.start();
+
+    const head = parseHead(table.relay.stored([{ kinds: [KIND.GAME_HEAD], '#d': [gameId] }])[0]);
+    expect(head.ok).toBe(true);
+    if (!head.ok) return;
+
+    // The head carries `redact` output, and `redact` output is not `serialize`
+    // output — so it must NOT be run through `deserialize` on the way in. It is
+    // also the value `applyPatch` folds onto, which the module contract is
+    // explicit about. This passes trivially for a module whose State is already
+    // a plain object; it is the guard for one whose State is a class, where
+    // deserializing here silently produces a view no patch can be folded into.
+    expect(session.getSnapshot().state).toEqual(head.value.state);
+
+    session.close();
+  });
 });
 
 describe('GM policy', () => {

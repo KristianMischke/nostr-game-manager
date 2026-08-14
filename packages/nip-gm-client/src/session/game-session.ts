@@ -322,7 +322,15 @@ export function createGameSession<View, Move>(
       if (head && head.ok && heads[0].pubkey === gm) {
         bootstrapped = true;
         refresh({
-          state: module.deserialize(head.value.state) as View,
+          // Taken as-is, NOT through `deserialize`. The head carries what
+          // `redact` produced (see `publishHead` in the runner), and `redact`
+          // output is not `serialize` output — `deserialize` is the inverse of
+          // the latter only. Feeding one to the other happens to work for a
+          // module whose `State` is already a plain object, and breaks for a
+          // module whose `State` is a class. It also has to be the redacted
+          // view for `applyPatch` to fold onto, which the module contract is
+          // explicit about.
+          state: head.value.state as View,
           seq: head.value.seq,
           // At seq 0 the state was made against the start event itself.
           prev: head.value.seq === 0 ? gameId : store.getSnapshot().prev,
