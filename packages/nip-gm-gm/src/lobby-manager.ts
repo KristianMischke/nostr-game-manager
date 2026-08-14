@@ -138,12 +138,12 @@ export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
   ): Promise<void> => {
     const seats = managed.lobby.players.map((p) => p.pubkey);
 
-    let config: unknown;
+    // Parsed for validation only — the *raw* config is what gets published
+    // below. A lobby whose config the module rejects can never start; close it
+    // rather than leaving players waiting on a game that will not come.
     try {
-      config = module.parseConfig(managed.lobby.config.config);
+      module.parseConfig(managed.lobby.config.config);
     } catch {
-      // A lobby whose config the module rejects can never start; close it rather
-      // than leaving players waiting on a game that will not come.
       managed.lobby = { ...managed.lobby, status: 'closed' };
       await republish(managed);
       return;
@@ -160,7 +160,14 @@ export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
           version: module.version,
           content: {
             rulesHash: module.rulesHash,
-            config,
+            // The raw lobby config, NOT `parseConfig`'s output. Every auditor
+            // and every joining client runs `parseConfig` on this field, so it
+            // has to be parser *input*. Publishing the parsed value would also
+            // silently require a module's Config to survive a JSON round trip,
+            // which nothing states and which a Config holding Maps or class
+            // instances does not — it stringifies to `{}` and every auditor
+            // then rebuilds a different game than the one that was played.
+            config: managed.lobby.config.config,
             // Committed before any play, so no outcome can be chosen after
             // seeing the moves.
             seedCommit: managed.commitment.commit,

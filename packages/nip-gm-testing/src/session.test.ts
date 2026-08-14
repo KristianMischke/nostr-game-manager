@@ -662,6 +662,25 @@ describe('start conditions', () => {
     other.close();
   });
 
+  it('publishes the raw lobby config in the start event, not parseConfig output', async () => {
+    const table = await seat(2);
+    // `extra` is dropped by ordersModule.parseConfig, so its presence in the
+    // start event is proof the raw value was published.
+    const raw = { ...CONFIG, extra: 'kept' };
+    const gameId = await startGame(table, raw);
+
+    const start = parseState(table.relay.stored([{ ids: [gameId] }])[0]);
+    expect(start.ok).toBe(true);
+    if (!start.ok || start.value.type !== 'start') return;
+
+    // Auditors and joining clients both run `parseConfig` on this field, so it
+    // must be parser input. Publishing parsed output would also quietly require
+    // every module's Config to survive a JSON round trip — a Config holding
+    // Maps stringifies to `{}`, and every auditor would then rebuild a
+    // different game than the one that was played.
+    expect(start.value.content.config).toEqual(raw);
+  });
+
   it('still defaults to `ready` when the client asks for nothing', async () => {
     const table = await seat(1);
     const lobby = createLobbySession({
