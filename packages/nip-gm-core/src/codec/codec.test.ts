@@ -9,6 +9,8 @@ import {
   buildLobbyAction,
   buildMove,
   buildResponse,
+  formatCreateRequest,
+  parseCreateRequest,
   parseMessage,
   parseResponseBody,
 } from './message.js';
@@ -289,6 +291,62 @@ describe('messages (2600)', () => {
     const built = buildMove(GAME, GM, '{}', { mode: 'casual' });
     expect(built.kind).toBe(KIND.MESSAGE_EPHEMERAL);
     expect(parseMessage(signed(built, A)).ok).toBe(true);
+  });
+
+  describe('create request body', () => {
+    it('round-trips every field', () => {
+      const request = {
+        visibility: 'private' as const,
+        join: 'anytime' as const,
+        start: { kind: 'timer' as const, seconds: 30 },
+        code: 'hunter2',
+        config: { boardSize: 12 },
+      };
+
+      expect(parseCreateRequest(formatCreateRequest(request))).toEqual({
+        ok: true,
+        value: request,
+      });
+    });
+
+    it('defaults everything but config, which defaults to {}', () => {
+      expect(parseCreateRequest('{}')).toEqual({ ok: true, value: { config: {} } });
+      expect(parseCreateRequest(JSON.stringify({ config: { a: 1 } }))).toEqual({
+        ok: true,
+        value: { config: { a: 1 } },
+      });
+    });
+
+    it('reads a leader lobby', () => {
+      expect(parseCreateRequest(JSON.stringify({ start: 'leader', config: {} }))).toEqual({
+        ok: true,
+        value: { start: { kind: 'leader' }, config: {} },
+      });
+    });
+
+    it('rejects malformed fields rather than silently defaulting them', () => {
+      // Coercing this to `ready` would hand the creator a lobby that behaves
+      // differently from the one they asked for, discovered only when it
+      // failed to start.
+      expect(parseCreateRequest(JSON.stringify({ start: 'leedur' }))).toEqual({
+        ok: false,
+        error: 'bad_start',
+      });
+      expect(parseCreateRequest(JSON.stringify({ start: 'timer:soon' }))).toEqual({
+        ok: false,
+        error: 'bad_start',
+      });
+      expect(parseCreateRequest(JSON.stringify({ visibility: 'secret' }))).toEqual({
+        ok: false,
+        error: 'bad_visibility',
+      });
+      expect(parseCreateRequest(JSON.stringify({ join: 'whenever' }))).toEqual({
+        ok: false,
+        error: 'bad_join',
+      });
+      expect(parseCreateRequest(JSON.stringify({ code: 42 })).ok).toBe(false);
+      expect(parseCreateRequest('not json').ok).toBe(false);
+    });
   });
 });
 

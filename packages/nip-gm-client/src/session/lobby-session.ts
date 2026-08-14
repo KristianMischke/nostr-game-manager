@@ -14,6 +14,7 @@ import {
   buildCreate,
   buildLobbyAction,
   formatAddress,
+  formatCreateRequest,
   KIND,
   lobbyFilter,
   parseLobby,
@@ -25,12 +26,15 @@ import {
   type AddressPointer,
   type Clock,
   type Hex,
+  type JoinWindow,
   type Lobby,
   type NostrEvent,
   type PersistenceMode,
   type Signer,
+  type StartCondition,
   type Subscription,
   type Transport,
+  type Visibility,
 } from 'nip-gm-core';
 import { createStore, type ReadableStore } from '../store.js';
 import type { ProtocolError } from '../snapshot.js';
@@ -52,6 +56,27 @@ export interface LobbySessionOptions {
   clock?: Clock;
 }
 
+/**
+ * Lobby shape to ask the GM for. Everything is optional — omit it all and the
+ * GM applies its defaults (a public, `ready`-started lobby joinable only before
+ * the game begins).
+ *
+ * These are requests, not guarantees: the GM writes the lobby event and may
+ * refuse. Read the resulting `LobbySnapshot.lobby` for what you actually got.
+ */
+export interface CreateOptions {
+  visibility?: Visibility;
+  join?: JoinWindow;
+  /**
+   * `ready` — the GM starts once every joined player is ready.
+   * `leader` — the creator starts it explicitly with `ready({ start: true })`.
+   * `timer:<s>` — starts that many seconds after the lobby opens.
+   */
+  start?: StartCondition;
+  /** Join code for a code-gated private lobby. Encrypted to the GM. */
+  code?: string;
+}
+
 export interface LobbySession extends ReadableStore<LobbySnapshot> {
   /**
    * Ask the GM to open a lobby for a game module, and watch whatever it opens.
@@ -60,7 +85,7 @@ export interface LobbySession extends ReadableStore<LobbySnapshot> {
    * lobby creation is the GM's decision (NIP-GM §Game Messages — GM policy) and
    * a client that assumed success would show a lobby that does not exist.
    */
-  create(game: string, config?: unknown): Promise<AddressPointer>;
+  create(game: string, config?: unknown, options?: CreateOptions): Promise<AddressPointer>;
   /** Watch an existing lobby by address. */
   watch(address: AddressPointer): Promise<void>;
   join(): Promise<void>;
@@ -174,7 +199,11 @@ export function createLobbySession(options: LobbySessionOptions): LobbySession {
     subscriptions.push(transport.subscribe([lobbyFilter(address)], { onEvent: onLobby }));
   };
 
-  const create = async (game: string, config?: unknown): Promise<AddressPointer> => {
+  const create = async (
+    game: string,
+    config?: unknown,
+    createOptions: CreateOptions = {},
+  ): Promise<AddressPointer> => {
     await ensureResponseSub();
     const announcement: AddressPointer = { kind: KIND.GM_ANNOUNCEMENT, pubkey: gm, identifier: game };
 
@@ -182,7 +211,12 @@ export function createLobbySession(options: LobbySessionOptions): LobbySession {
     // answer the instant the event lands — synchronously, against an in-process
     // relay — and a waiter installed after the fact would miss it and hang.
     const event = await sign(
-      buildCreate(announcement, gm, JSON.stringify({ config: config ?? {} }), mode),
+      buildCreate(
+        announcement,
+        gm,
+        formatCreateRequest({ ...createOptions, config: config ?? {} }),
+        mode,
+      ),
     );
     const settled = new Promise<AddressPointer>((resolve, reject) => {
       awaitingResponse.set(event.id, { resolve, reject });

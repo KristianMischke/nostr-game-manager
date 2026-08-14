@@ -19,6 +19,7 @@ import {
   buildAnnouncement,
   buildResponse,
   inboxFilter,
+  parseCreateRequest,
   parseMessage,
   systemClock,
   verifyEvent,
@@ -162,14 +163,22 @@ export function createGM(options: GMOptions): GM {
           return;
         }
 
-        let config: unknown = {};
-        try {
-          config = (JSON.parse(message.content) as { config?: unknown }).config ?? {};
-        } catch {
-          // An unreadable create body falls back to module defaults rather than
-          // failing the request outright.
+        const create = parseCreateRequest(message.content);
+        if (!create.ok) {
+          // Reported, not silently defaulted. The body carries the lobby's
+          // start condition and visibility, so quietly falling back would hand
+          // the creator a lobby that behaves differently from the one they
+          // asked for — and they would only find out when it failed to start.
+          await publish(
+            buildResponse(event.id, event.pubkey, {
+              status: 'rejected',
+              reason: `bad_create_request:${create.error}`,
+            }),
+          );
+          return;
         }
-        await lobbies.create(module, event.pubkey, config, event);
+
+        await lobbies.create(module, event.pubkey, create.value, event);
         return;
       }
 

@@ -22,6 +22,7 @@ import {
   KIND,
   type AddressPointer,
   type Clock,
+  type CreateRequest,
   type GameModule,
   type Hex,
   type Lobby,
@@ -75,7 +76,13 @@ export interface LobbyManager {
   create(
     module: GameModule<unknown, unknown, unknown, unknown>,
     requester: Hex,
-    config: unknown,
+    /**
+     * The creator's parsed create body. Its `visibility` / `join` / `start`
+     * fields are honoured here; a GM wanting to constrain them should reject
+     * the request rather than silently substitute, so the creator never gets a
+     * lobby that behaves differently from the one they asked for.
+     */
+    create: CreateRequest,
     request: NostrEvent,
   ): Promise<ManagedLobby>;
   handle(
@@ -185,7 +192,9 @@ export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
   };
 
   return {
-    async create(module, requester, config, request): Promise<ManagedLobby> {
+    async create(module, requester, create, request): Promise<ManagedLobby> {
+      const { config } = create;
+      const start = create.start ?? { kind: 'ready' };
       const identifier = `${module.id}-${clock.now()}-${counter++}`;
       const address: AddressPointer = {
         kind: KIND.LOBBY,
@@ -213,9 +222,13 @@ export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
           lobbyId: identifier,
           game: module.id,
           version: module.version,
-          visibility: 'public',
-          join: 'before',
-          start: { kind: 'ready' },
+          visibility: create.visibility ?? 'public',
+          join: create.join ?? 'before',
+          start,
+          // The creator leads by definition: they are the only participant that
+          // exists when the lobby opens. A `leader` lobby with no leader can
+          // never start, and `parseLobby` rejects one outright.
+          leader: start.kind === 'leader' ? requester : undefined,
           status: 'open',
           // The creator is seated first, so creating a game seats you in it.
           players: [{ pubkey: requester, state: 'joined' }],

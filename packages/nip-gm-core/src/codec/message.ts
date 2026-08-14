@@ -19,6 +19,13 @@ import {
 } from '../types.js';
 import { parseJsonObject } from './json.js';
 import {
+  formatStartCondition,
+  parseStartCondition,
+  type JoinWindow,
+  type StartCondition,
+  type Visibility,
+} from './lobby.js';
+import {
   addressTag,
   formatAddress,
   isHex64,
@@ -210,6 +217,75 @@ export function parseMessage(event: NostrEvent): ParseResult<GameMessage> {
     default:
       return fail('unknown_action');
   }
+}
+
+/**
+ * The decrypted body of a `create` message (NIP-GM §Game Messages — create).
+ *
+ * Every field but `config` is optional: a client that only cares about the
+ * module's own settings sends `{ config }` and gets the GM's defaults for the
+ * rest. `code` is a join code for code-gated private lobbies — it rides here,
+ * inside the NIP-44 envelope, and never appears in the lobby event.
+ */
+export interface CreateRequest {
+  visibility?: Visibility;
+  join?: JoinWindow;
+  start?: StartCondition;
+  code?: string;
+  /** Module-defined settings, passed to `module.parseConfig`. */
+  config: unknown;
+}
+
+/**
+ * Parse a create body.
+ *
+ * Lenient about *absence* but strict about *malformation*: a body that omits
+ * `start` is the ordinary case, while `start: "leedur"` is a client bug. A GM
+ * that silently coerced the latter into `ready` would hand the creator a lobby
+ * that behaves differently from the one they asked for, which is worse than a
+ * rejection they can see.
+ */
+export function parseCreateRequest(content: string): ParseResult<CreateRequest> {
+  const parsed = parseJsonObject(content);
+  if (!parsed.ok) return parsed;
+  const raw = parsed.value;
+
+  const request: CreateRequest = { config: raw.config ?? {} };
+
+  if (raw.visibility !== undefined) {
+    if (raw.visibility !== 'public' && raw.visibility !== 'private') return fail('bad_visibility');
+    request.visibility = raw.visibility;
+  }
+
+  if (raw.join !== undefined) {
+    if (raw.join !== 'before' && raw.join !== 'anytime') return fail('bad_join');
+    request.join = raw.join;
+  }
+
+  if (raw.start !== undefined) {
+    if (typeof raw.start !== 'string') return fail('bad_start');
+    const start = parseStartCondition(raw.start);
+    if (!start) return fail('bad_start');
+    request.start = start;
+  }
+
+  if (raw.code !== undefined) {
+    if (typeof raw.code !== 'string') return fail('bad_code');
+    request.code = raw.code;
+  }
+
+  return ok(request);
+}
+
+/** Serialize a create body. The inverse of {@link parseCreateRequest}. */
+export function formatCreateRequest(request: CreateRequest): string {
+  return JSON.stringify({
+    visibility: request.visibility,
+    join: request.join,
+    start: request.start ? formatStartCondition(request.start) : undefined,
+    code: request.code,
+    config: request.config ?? {},
+  });
 }
 
 export function parseResponseBody(content: string): ParseResult<ResponseBody> {

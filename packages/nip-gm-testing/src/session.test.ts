@@ -15,6 +15,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   auditGame,
+  buildCreate,
   gameMessagesFilter,
   KIND,
   parseHead,
@@ -514,6 +515,98 @@ describe('GM policy', () => {
     // Rejected rather than ignored: a client that hears nothing cannot tell
     // "refused" from "offline" and retries forever.
     await expect(lobby.create(ordersModule.id, CONFIG)).rejects.toThrow('lobby_creation_disabled');
+    lobby.close();
+  });
+
+  it('rejects a malformed create body instead of substituting defaults', async () => {
+    const table = await seat(1);
+    const player = table.players[0];
+
+    // Hand-built rather than sent through `lobbySession.create`, because the
+    // client's formatter would sanitize the bad value away. This is what a
+    // buggy or hostile client actually puts on the wire.
+    const request = await player.signEvent({
+      ...buildCreate(
+        { kind: KIND.GM_ANNOUNCEMENT, pubkey: table.gmSigner.pubkey, identifier: ordersModule.id },
+        table.gmSigner.pubkey,
+        JSON.stringify({ start: 'leedur', config: CONFIG }),
+      ),
+      pubkey: player.pubkey,
+      created_at: table.clock.now(),
+    });
+    await table.relay.publish(request);
+    await table.gm.drain();
+
+    const responses = table.relay.stored([{ kinds: [KIND.MESSAGE], '#p': [player.pubkey] }]);
+    const body = JSON.parse(responses.at(-1)!.content) as { status: string; reason?: string };
+
+    expect(body.status).toBe('rejected');
+    expect(body.reason).toBe('bad_create_request:bad_start');
+    // And no lobby was opened under a substituted default.
+    expect(table.relay.stored([{ kinds: [KIND.LOBBY] }])).toHaveLength(0);
+  });
+});
+
+describe('start conditions', () => {
+  it('starts a `leader` lobby only when the leader says so', async () => {
+    const table = await seat(2);
+    const [creator, other] = table.players.map((signer) =>
+      createLobbySession({
+        transport: table.relay,
+        signer,
+        gm: table.gmSigner.pubkey,
+        clock: table.clock,
+      }),
+    );
+
+    const address = await creator.create(ordersModule.id, CONFIG, { start: { kind: 'leader' } });
+    await table.gm.drain();
+
+    // The creator leads: they are the only participant when the lobby opens.
+    expect(creator.getSnapshot().lobby?.start).toEqual({ kind: 'leader' });
+    expect(creator.getSnapshot().lobby?.leader).toBe(table.players[0].pubkey);
+
+    await other.watch(address);
+    await other.join();
+    await table.gm.drain();
+
+    // Everyone being ready is NOT enough here — that is the whole difference
+    // from a `ready` lobby, where this would already have started the game.
+    await creator.ready();
+    await table.gm.drain();
+    await other.ready();
+    await table.gm.drain();
+    expect(creator.getSnapshot().gameId).toBeNull();
+
+    // A non-leader's start intent is meaningless and must be ignored.
+    await other.ready({ start: true });
+    await table.gm.drain();
+    expect(creator.getSnapshot().gameId).toBeNull();
+
+    await creator.ready({ start: true });
+    await table.gm.drain();
+    expect(creator.getSnapshot().gameId).toBeTruthy();
+
+    creator.close();
+    other.close();
+  });
+
+  it('still defaults to `ready` when the client asks for nothing', async () => {
+    const table = await seat(1);
+    const lobby = createLobbySession({
+      transport: table.relay,
+      signer: table.players[0],
+      gm: table.gmSigner.pubkey,
+      clock: table.clock,
+    });
+
+    await lobby.create(ordersModule.id, CONFIG);
+    await table.gm.drain();
+
+    expect(lobby.getSnapshot().lobby?.start).toEqual({ kind: 'ready' });
+    expect(lobby.getSnapshot().lobby?.visibility).toBe('public');
+    expect(lobby.getSnapshot().lobby?.leader).toBeUndefined();
+
     lobby.close();
   });
 });
