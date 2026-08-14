@@ -701,6 +701,90 @@ describe('start conditions', () => {
   });
 });
 
+describe('same-second republication', () => {
+  /**
+   * The clock never advances in these tests, which is not a simplification —
+   * it is the realistic case. A lobby fills up in milliseconds, and `created_at`
+   * has one-second resolution, so every rewrite of the lobby event carries the
+   * same timestamp as the version already on the relay. NIP-01 resolves that tie
+   * by id, not by arrival, so the GM cannot assume its newer version wins.
+   *
+   * This bites nothing until a real relay is involved: it is invisible to any
+   * transport that overwrites on write, and it produces no error anywhere. The
+   * lobby simply stops updating, and players wait forever for a game that from
+   * their side never filled up.
+   */
+  it('advances created_at so every lobby rewrite survives the replacement race', async () => {
+    const table = await seat(3);
+    const [creator, second, third] = table.players.map((signer) =>
+      createLobbySession({
+        transport: table.relay,
+        signer,
+        gm: table.gmSigner.pubkey,
+        clock: table.clock,
+      }),
+    );
+
+    const address = await creator.create(ordersModule.id, CONFIG);
+    await table.gm.drain();
+
+    for (const lobby of [second, third]) {
+      await lobby.watch(address);
+      await lobby.join();
+      await table.gm.drain();
+    }
+
+    // Six rewrites (create, two joins, three readies) inside one clock second.
+    expect(table.clock.now()).toBe(table.clock.now());
+    expect(creator.getSnapshot().lobby?.players).toHaveLength(3);
+
+    // And a client arriving now — reading storage rather than the live stream —
+    // must see the same roster. This is the half a live-only delivery would fake.
+    const latecomer = createLobbySession({
+      transport: table.relay,
+      signer: signerFromSeed(99),
+      gm: table.gmSigner.pubkey,
+      clock: table.clock,
+    });
+    await latecomer.watch(address);
+    expect(latecomer.getSnapshot().lobby?.players).toHaveLength(3);
+
+    for (const lobby of [creator, second, third]) {
+      await lobby.ready();
+      await table.gm.drain();
+    }
+
+    // The last rewrite of all — the one carrying `gameId` — is the one a naive
+    // stamp is most likely to lose, because by then the coordinate has been
+    // written five times already.
+    expect(creator.getSnapshot().gameId).toBeTruthy();
+    expect(latecomer.getSnapshot().gameId).toBe(creator.getSnapshot().gameId);
+
+    for (const lobby of [creator, second, third, latecomer]) lobby.close();
+  });
+
+  it('leaves regular events on the true clock time', async () => {
+    // The guard applies to current-state documents, never to log entries. A
+    // move, a delta or a response is a regular event: it accumulates, it never
+    // races anything, and its timestamp is evidence. Inflating those to keep a
+    // counter monotonic would corrupt the record an auditor reads.
+    const table = await seat(2);
+    const gameId = await startGame(table);
+    const now = table.clock.now();
+
+    const regular = table.relay.log.filter(
+      (e) => e.pubkey === table.gmSigner.pubkey && e.kind === KIND.MESSAGE,
+    );
+    expect(regular.length).toBeGreaterThan(0);
+    for (const event of regular) expect(event.created_at).toBe(now);
+
+    // Whereas the lobby, rewritten repeatedly at that same coordinate, has been
+    // pushed ahead of the wall clock — the deliberate cost of the guard.
+    const lobby = table.relay.stored([{ kinds: [KIND.LOBBY] }])[0];
+    expect(lobby.created_at).toBeGreaterThan(now);
+  });
+});
+
 describe('the relay itself', () => {
   it('never stores an ephemeral event but still delivers it live', async () => {
     const relay = createMemoryRelay();
@@ -742,6 +826,45 @@ describe('the relay itself', () => {
     expect(stored).toHaveLength(1);
     expect(stored[0].created_at).toBe(20);
     // The whole log is still there for anyone auditing what was published.
+    expect(relay.log).toHaveLength(2);
+  });
+
+  it('does not deliver a replacement it refused to store', async () => {
+    // `created_at` is in whole seconds, so a GM rewriting a lobby on every join
+    // routinely publishes two versions within the same second. NIP-01 says the
+    // relay keeps the lower id on a tie — it does not keep the newer arrival —
+    // and an event the relay refuses to store is an event it does not forward.
+    //
+    // Delivering it live anyway would be the worst kind of wrong: every client
+    // connected at that moment would see the update, so the publisher would look
+    // correct, and only a client joining later would read the stale version and
+    // have no idea why.
+    const relay = createMemoryRelay();
+    const signer = signerFromSeed(9);
+    const seen: NostrEvent[] = [];
+    relay.subscribe([{ kinds: [KIND.LOBBY] }], { onEvent: (e) => seen.push(e) });
+
+    const at = (n: number, created_at: number): Promise<NostrEvent> =>
+      signer.signEvent({
+        kind: KIND.LOBBY,
+        tags: [['d', 'room']],
+        content: JSON.stringify({ n }),
+        pubkey: signer.pubkey,
+        created_at,
+      });
+
+    // Two candidates one second apart, published newest first. The second
+    // publish loses the replacement race however the ids happen to sort.
+    const newer = await at(1, 20);
+    const older = await at(0, 10);
+    await relay.publish(newer);
+    await relay.publish(older);
+
+    expect(seen.map((e) => e.id)).toStrictEqual([newer.id]);
+    expect(relay.stored([{ kinds: [KIND.LOBBY] }])).toHaveLength(1);
+    expect(relay.stored([{ kinds: [KIND.LOBBY] }])[0].id).toBe(newer.id);
+    // Still published, and still visible to anyone auditing the wire — it just
+    // never became the current version and never reached a subscriber.
     expect(relay.log).toHaveLength(2);
   });
 

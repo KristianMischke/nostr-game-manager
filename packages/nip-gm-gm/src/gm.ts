@@ -38,6 +38,7 @@ import {
   type LobbyManager,
 } from './lobby-manager.js';
 import { mayCreate, type GMPolicy } from './policy.js';
+import { createPublisher } from './publisher.js';
 import { createRunner, type GameRunner } from './runner.js';
 
 export interface GMOptions {
@@ -90,24 +91,20 @@ export function createGM(options: GMOptions): GM {
     });
   };
 
-  const publish = async (template: {
-    kind: number;
-    tags: string[][];
-    content: string;
-  }): Promise<NostrEvent> => {
-    const event = await signer.signEvent({
-      ...template,
-      pubkey: pubkey as Hex,
-      created_at: clock.now(),
-    });
-    await transport.publish(event);
-    return event;
-  };
+  // One publisher for the whole daemon, shared with the lobby manager and every
+  // runner. Sharing is the point: the monotonic `created_at` guard it applies to
+  // addressable events is per-coordinate state, and two publishers writing the
+  // same lobby would each think they were first. See `publisher.ts`.
+  const publish = createPublisher({
+    transport,
+    signer,
+    clock,
+    pubkey: () => pubkey as Hex,
+  });
 
   const buildLobbyManager = (gmPubkey: Hex): LobbyManager =>
     createLobbyManager({
-      transport,
-      signer,
+      publish,
       gmPubkey,
       clock,
       defaults,
@@ -117,7 +114,7 @@ export function createGM(options: GMOptions): GM {
 
         const runner = createRunner({
           module,
-          transport,
+          publish,
           signer,
           clock,
           gmPubkey,

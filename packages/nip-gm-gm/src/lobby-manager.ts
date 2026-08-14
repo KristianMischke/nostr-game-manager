@@ -31,9 +31,8 @@ import {
   type NostrEvent,
   type PersistenceMode,
   type SeedCommitment,
-  type Signer,
-  type Transport,
 } from 'nip-gm-core';
+import type { Publisher } from './publisher.js';
 
 export interface LobbyDefaults {
   mode: PersistenceMode;
@@ -63,8 +62,13 @@ export interface ManagedLobby {
 }
 
 export interface LobbyManagerOptions {
-  transport: Transport;
-  signer: Signer;
+  /**
+   * Signs and publishes, stamping addressable events with a strictly increasing
+   * `created_at`. That guard is load-bearing here: the lobby is rewritten on
+   * every join and ready, several times within one second, and a relay drops a
+   * rewrite whose `created_at` has not advanced. See `publisher.ts`.
+   */
+  publish: Publisher;
   gmPubkey: Hex;
   clock: Clock;
   defaults: LobbyDefaults;
@@ -97,22 +101,8 @@ export interface LobbyManager {
 let counter = 0;
 
 export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
-  const { transport, signer, gmPubkey, clock } = options;
+  const { publish, gmPubkey, clock } = options;
   const lobbies = new Map<string, ManagedLobby>();
-
-  const publish = async (template: {
-    kind: number;
-    tags: string[][];
-    content: string;
-  }): Promise<NostrEvent> => {
-    const event = await signer.signEvent({
-      ...template,
-      pubkey: gmPubkey,
-      created_at: clock.now(),
-    });
-    await transport.publish(event);
-    return event;
-  };
 
   const republish = async (managed: ManagedLobby): Promise<void> => {
     await publish(buildLobby(managed.lobby));

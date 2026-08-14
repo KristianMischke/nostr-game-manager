@@ -117,22 +117,36 @@ export function createMemoryRelay(): MemoryRelay {
     return undefined;
   };
 
-  const store = (event: NostrEvent): void => {
+  /**
+   * Apply NIP-01 storage rules. Returns whether the relay accepted the event,
+   * which is also whether it gets broadcast to live subscriptions.
+   *
+   * That coupling is the subtle part. An event a relay refuses to store is an
+   * event it does not forward — so a superseded lobby rewrite reaches nobody,
+   * neither the clients subscribed right now nor one joining later. Delivering
+   * it live anyway would make a publisher that keeps losing the replacement race
+   * look like it is working, because every currently-connected client would see
+   * the update the relay just threw away, and only a client that joined later
+   * would see the stale version. Ephemeral events are the deliberate exception:
+   * never stored, always forwarded.
+   */
+  const store = (event: NostrEvent): boolean => {
     const cls = eventClass(event.kind);
-    if (cls === 'ephemeral') return;
+    if (cls === 'ephemeral') return true;
 
     const key = slotKey(event, cls);
     if (key === undefined) {
       events.set(event.id, event);
-      return;
+      return true;
     }
 
     const heldId = slots.get(key);
     const held = heldId === undefined ? undefined : events.get(heldId);
-    if (held && !supersedes(event, held)) return; // An older replacement is dropped.
+    if (held && !supersedes(event, held)) return false; // An older replacement is dropped.
     if (heldId !== undefined) events.delete(heldId);
     events.set(event.id, event);
     slots.set(key, event.id);
+    return true;
   };
 
   const matching = (filters: readonly Filter[]): NostrEvent[] => {
@@ -150,7 +164,10 @@ export function createMemoryRelay(): MemoryRelay {
         throw new Error(`memory relay rejected event ${event.id.slice(0, 8)}: bad id or signature`);
       }
       published.push(event);
-      store(event);
+      // Relays generally still answer `OK true` to a superseded replacement —
+      // it is not an error, it is a no-op — so this does not throw. It simply
+      // goes nowhere, which is exactly what makes the failure hard to find.
+      if (!store(event)) return;
 
       // Copy: a handler may close its own subscription, or open another.
       for (const sub of [...subs]) {

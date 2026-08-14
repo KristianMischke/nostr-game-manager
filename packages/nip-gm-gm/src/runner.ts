@@ -57,9 +57,9 @@ import {
   type RevisionCandidate,
   type SeedCommitment,
   type SystemInput,
-  type Transport,
 } from 'nip-gm-core';
 import { bytesToHex } from '@noble/hashes/utils';
+import type { Publisher } from './publisher.js';
 
 /** One accepted revision, with everything the closing delta will have to publish. */
 interface Accepted<Move> {
@@ -83,7 +83,14 @@ interface OpenRound<Move> {
 
 export interface RunnerOptions<Config, State, Move, Patch> {
   module: GameModule<Config, State, Move, Patch>;
-  transport: Transport;
+  /**
+   * Signs and publishes. The head is addressable and republished on every
+   * snapshot, so it needs the strictly-increasing `created_at` this guarantees —
+   * a relay drops a rewrite that does not advance the timestamp, leaving joining
+   * clients to bootstrap from a stale board. See `publisher.ts`.
+   */
+  publish: Publisher;
+  /** Still needed directly: only the GM's raw key can encrypt and reveal. */
   signer: KeySigner;
   clock: Clock;
   gmPubkey: Hex;
@@ -112,7 +119,7 @@ export interface GameRunner {
 export function createRunner<Config, State, Move, Patch>(
   options: RunnerOptions<Config, State, Move, Patch>,
 ): GameRunner {
-  const { module, transport, signer, clock, start, seats, lobby } = options;
+  const { module, publish, signer, clock, start, seats, lobby } = options;
   const gameId = start.id;
   const mode = lobby.mode;
 
@@ -125,20 +132,6 @@ export function createRunner<Config, State, Move, Patch>(
 
   let round: OpenRound<Move> | null = null;
   let stopped = false;
-
-  const publish = async (template: {
-    kind: number;
-    tags: string[][];
-    content: string;
-  }): Promise<NostrEvent> => {
-    const event = await signer.signEvent({
-      ...template,
-      pubkey: options.gmPubkey,
-      created_at: clock.now(),
-    });
-    await transport.publish(event);
-    return event;
-  };
 
   const reject = async (target: NostrEvent, reason: string): Promise<void> => {
     await publish(
