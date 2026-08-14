@@ -277,6 +277,14 @@ export function createGameSession<View, Move>(
     const body = parseResponseBody(parsed.value.content);
     if (!body.ok || body.value.status !== 'rejected') return;
     setError('move_rejected', body.value.reason, parsed.value.target);
+
+    // A refused move is not a submitted move. The composer reopens the round
+    // (it had marked itself `final` on publication) and drops the pending
+    // revision, so `needsMyMove` goes back to true and the player is asked to
+    // act instead of watching the turn clock run out on a move the GM already
+    // threw away.
+    composer?.reject(parsed.value.target);
+    refresh({ pending: composer?.pending ?? null });
   };
 
   /* --- lifecycle --------------------------------------------------------- */

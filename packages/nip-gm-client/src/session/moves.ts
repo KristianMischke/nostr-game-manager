@@ -93,6 +93,12 @@ export interface MoveComposer<Move> {
   draft(move: Move): void;
   /** Publish now and declare it my last word for the round. Resolves once it is on the wire. */
   commit(move?: Move): Promise<void>;
+  /**
+   * The GM refused the revision with this id. No-op unless it is the one
+   * currently pending, so a rejection of a superseded revision cannot undo a
+   * later one the GM accepted.
+   */
+  reject(moveId: Hex): void;
   /** Publish the current draft now as a non-final revision. */
   flush(): Promise<void>;
   readonly pending: PendingMove<Move> | null;
@@ -205,6 +211,23 @@ export function createMoveComposer<Move>(
       if (move !== undefined) round.draft = move;
       if (round.final) return;
       await publish(true);
+    },
+
+    reject(moveId: Hex): void {
+      if (!round || !pending || pending.id !== moveId) return;
+
+      // Reopen the round. A refused revision is not a submitted move, and the
+      // `final` flag set when it was published otherwise locks the player out
+      // for good: `commit` returns early forever and they can only watch the
+      // turn clock run out on a move the GM already threw away.
+      //
+      // `next` is deliberately NOT rewound. Revision numbers must strictly
+      // increase per (player, seq) — reusing one with different content is
+      // equivocation by a signed key, which the GM resolves against the player
+      // and SHOULD treat as evidence of a misbehaving client.
+      round.final = false;
+      pending = null;
+      scheduleTick();
     },
 
     async flush(): Promise<void> {

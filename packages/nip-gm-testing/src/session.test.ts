@@ -299,6 +299,49 @@ describe('revisions over the wire', () => {
     expect(auditOf(table, gameId).ok).toBe(true);
   });
 
+  it('clears the pending move when the GM rejects it, so the player owes one again', async () => {
+    const table = await seat(2);
+    const gameId = await startGame(table);
+
+    const sessions = table.players.map((signer) =>
+      createGameSession<OrdersView, OrdersMove>({
+        transport: table.relay,
+        module: ordersModule,
+        gm: table.gmSigner.pubkey,
+        gameId,
+        signer,
+        clock: table.clock,
+      }),
+    );
+    for (const session of sessions) await session.start();
+
+    // Round 1 spends 3 of 5 energy each, leaving 2.
+    for (const session of sessions) {
+      await session.commit({ type: 'advance', distance: 3 });
+      await table.gm.drain();
+    }
+
+    // Round 2: 2 energy will not buy a 3-tile advance.
+    await sessions[0].commit({ type: 'advance', distance: 3 });
+    await table.gm.drain();
+
+    const snapshot = sessions[0].getSnapshot();
+    expect(snapshot.error?.code).toBe('move_rejected');
+    expect(snapshot.error?.message).toBe('not_enough_energy');
+    // The refused move is not a submitted move. Leaving it pending would keep
+    // `needsMyMove` false for the rest of the round and park the UI on
+    // "waiting for opponents" until the turn timed out.
+    expect(snapshot.pending).toBeNull();
+    expect(snapshot.needsMyMove).toBe(true);
+
+    // And the player can actually retry.
+    await sessions[0].commit({ type: 'hold' });
+    await table.gm.drain();
+    expect(sessions[0].getSnapshot().pending).not.toBeNull();
+
+    for (const session of sessions) session.close();
+  });
+
   it('rejects a revision that does not beat what the GM already holds', async () => {
     const table = await seat(2);
     const gameId = await startGame(table);
