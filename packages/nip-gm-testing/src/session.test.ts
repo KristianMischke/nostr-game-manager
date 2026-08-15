@@ -1125,6 +1125,113 @@ describe('start conditions', () => {
   });
 });
 
+describe('leaving a lobby', () => {
+  it('hands the lead to the next seat when the leader walks out', async () => {
+    // Three seats so that two remain once the creator walks out: `minPlayers`
+    // is still enforced, and a lobby left below it could not start whoever led
+    // it.
+    const table = await seat(3);
+    const [creator, second, third] = table.players.map((signer) =>
+      createLobbySession({
+        transport: table.relay,
+        signer,
+        gm: table.gmSigner.pubkey,
+        clock: table.clock,
+      }),
+    );
+
+    const address = await creator.create(ordersModule.id, CONFIG, { start: { kind: 'leader' } });
+    await table.gm.drain();
+    for (const lobby of [second, third]) {
+      await lobby.watch(address);
+      await lobby.join();
+      await table.gm.drain();
+    }
+    expect(second.getSnapshot().lobby?.leader).toBe(table.players[0].pubkey);
+
+    await creator.leave();
+    await table.gm.drain();
+
+    // Left pointing at the departed creator, the lobby would stay open forever:
+    // only the leader's start intent counts, and the leader is gone.
+    expect(second.getSnapshot().lobby?.leader).toBe(table.players[1].pubkey);
+    expect(second.getSnapshot().lobby?.status).toBe('open');
+
+    // A non-leader's intent is still meaningless — the lead moved, it did not
+    // evaporate.
+    await third.ready({ start: true });
+    await table.gm.drain();
+    expect(second.getSnapshot().gameId).toBeNull();
+
+    await second.ready({ start: true });
+    await table.gm.drain();
+    expect(second.getSnapshot().gameId).toBeTruthy();
+
+    creator.close();
+    second.close();
+    third.close();
+  });
+
+  it('closes a lobby the last player leaves, rather than leaving it open', async () => {
+    const table = await seat(1);
+    const lobby = createLobbySession({
+      transport: table.relay,
+      signer: table.players[0],
+      gm: table.gmSigner.pubkey,
+      clock: table.clock,
+    });
+
+    await lobby.create(ordersModule.id, CONFIG);
+    await table.gm.drain();
+    expect(lobby.getSnapshot().lobby?.status).toBe('open');
+
+    await lobby.leave();
+    await table.gm.drain();
+
+    // Nothing else would ever close it: an addressable event outlives the
+    // process that wrote it, so an empty `open` lobby advertises a game with
+    // nobody in it until the end of the relay's days.
+    expect(lobby.getSnapshot().lobby?.players).toEqual([]);
+    expect(lobby.getSnapshot().lobby?.status).toBe('closed');
+
+    lobby.close();
+  });
+
+  it('leaves an ordinary departure alone', async () => {
+    const table = await seat(3);
+    const [creator, second, third] = table.players.map((signer) =>
+      createLobbySession({
+        transport: table.relay,
+        signer,
+        gm: table.gmSigner.pubkey,
+        clock: table.clock,
+      }),
+    );
+
+    const address = await creator.create(ordersModule.id, CONFIG, { start: { kind: 'leader' } });
+    await table.gm.drain();
+    for (const lobby of [second, third]) {
+      await lobby.watch(address);
+      await lobby.join();
+      await table.gm.drain();
+    }
+
+    await third.leave();
+    await table.gm.drain();
+
+    expect(creator.getSnapshot().lobby?.status).toBe('open');
+    expect(creator.getSnapshot().lobby?.leader).toBe(table.players[0].pubkey);
+    expect(creator.getSnapshot().lobby?.players.map((p) => p.pubkey)).toEqual([
+      table.players[0].pubkey,
+      table.players[1].pubkey,
+    ]);
+
+    creator.close();
+    second.close();
+    third.close();
+  });
+});
+
 describe('same-second republication', () => {
   /**
    * The clock never advances in these tests, which is not a simplification —

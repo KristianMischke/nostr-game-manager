@@ -173,6 +173,41 @@ export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
     await options.onStart(managed, start);
   };
 
+  /**
+   * What is left of a lobby after someone leaves.
+   *
+   * Two things splicing the roster does not do on its own.
+   *
+   * The leader is a pubkey held *outside* the player list, so a leader who
+   * leaves leaves it pointing at somebody who is not here. Nothing rejects that
+   * lobby — `parseLobby` only checks the tag is present — so clients keep
+   * listing it as joinable while `maybeStart` matches every start intent
+   * against a pubkey that will never send one. The lobby stays open forever and
+   * can never begin. Seat order picks the successor, for the same reason it
+   * decides everything else here.
+   *
+   * And a lobby everybody has left is not a lobby. Nothing else would ever
+   * close it: there is no reaper, and an addressable event lives on the relay
+   * until it is replaced, so an abandoned lobby would sit there advertising a
+   * game with nobody in it.
+   */
+  const settleDeparture = (managed: ManagedLobby): void => {
+    const { players, leader, status } = managed.lobby;
+
+    if (players.length === 0) {
+      // Only an open lobby closes here. Once a game is running its lobby event
+      // is the record of where that game came from, and a player walking out is
+      // a forfeit for the runner to materialize — not a reason to rewrite
+      // history.
+      if (status === 'open') managed.lobby = { ...managed.lobby, status: 'closed' };
+      return;
+    }
+
+    if (leader && !players.some((p) => p.pubkey === leader)) {
+      managed.lobby = { ...managed.lobby, leader: players[0].pubkey };
+    }
+  };
+
   const maybeStart = async (
     managed: ManagedLobby,
     module: GameModule<unknown, unknown, unknown, unknown>,
@@ -285,6 +320,7 @@ export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
       }
 
       managed.lobby = { ...managed.lobby, players };
+      if (message.action === 'leave') settleDeparture(managed);
       await republish(managed);
       await respond(event, { status: 'accepted', lobby: formatAddress(managed.address) }, mode);
 
