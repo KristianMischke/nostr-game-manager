@@ -334,11 +334,15 @@ An optional GM broadcast reporting which revisions it has accepted for the open 
     ["e", "<game_id>", "", "root"],
     ["seq", "13"]
   ],
-  "content": "{\"seq\":13, \"received\":{\"<player_pubkey>\":{\"rev\":2,\"final\":false}}}"
+  "content": "{\"seq\":13, \"received\":{\"<player_pubkey>\":{\"rev\":2,\"final\":false}}, \"remaining\":47}"
 }
 ```
 
 A published move is not an applied move: it may be superseded, rejected, or simply never have reached the GM. Without this event a player learns their submission's fate only when the round closes, which for a move composed across a whole round is far too late to do anything about. `status` gives clients a "received, revision 2" signal and doubles as the public "4 of 6 locked in" indicator, in one event covering every player rather than a response per revision.
+
+`remaining` is the turn clock: the number of seconds left before the GM closes the round on its `turn_timeout`, omitted entirely when the round is untimed. It is a **duration, not a deadline**, and that is the point — clients' clocks routinely differ from the GM's by minutes, so a published wall-clock instant would be wrong by exactly that skew, while a duration is only wrong by the event's flight time. A client adds it to its own clock on receipt and counts down locally; each status re-anchors that estimate, so a client's countdown converges on the GM's rather than drifting with a browser timer. It is advisory like the rest of the event: the GM closes its own rounds, and a client MUST NOT act on its local countdown reaching zero.
+
+Because the event is ephemeral, a client that joins or reloads mid-round sees nothing until the next one is published. A GM running timed rounds SHOULD therefore publish `status` when it opens a round and then periodically while the round is open (every ~10s is ample), not only when a move arrives — otherwise a round in which nobody moves, the case where the countdown matters most, never shows a clock at all.
 
 It is **not a replay input** and MUST be ignored by verifiers: it is GM-asserted, unordered, and carries no state. It is published on the ephemeral kind in both persistence modes for the same reason — it has no archival value and would otherwise dominate a game's permanent log.
 

@@ -78,6 +78,10 @@ interface OpenRound<Move> {
   /** Move event id → what we accepted. Every revision, not just the winners. */
   accepted: Map<Hex, Accepted<Move>>;
   timer: { cancel(): void } | null;
+  /** Republishes `status` while the round is open; see `statusInterval`. */
+  heartbeat: { cancel(): void } | null;
+  /** Clock time this round times out at, or null when it is untimed. */
+  deadline: number | null;
   closing: boolean;
 }
 
@@ -100,8 +104,26 @@ export interface RunnerOptions<Config, State, Move, Patch> {
   config: Config;
   commitment: SeedCommitment;
   lobby: LobbyConfig;
+  /**
+   * Seconds between `status` republications while a timed round is open; 0
+   * disables them. Ignored for an untimed round, which has no countdown to
+   * report and where status on move arrival is the whole story.
+   *
+   * A heartbeat exists because `status` is ephemeral: relays store nothing, so a
+   * client that joins (or reloads) mid-round hears the round's deadline only
+   * when the next move happens to arrive — which in a round where nobody moves
+   * is never. See {@link DEFAULT_STATUS_INTERVAL}.
+   */
+  statusInterval?: number;
   onEnd?(gameId: Hex, result: GameResult | undefined): void;
 }
+
+/**
+ * Ten seconds: frequent enough that a client joining mid-round starts its
+ * countdown almost immediately, rare enough to be nothing next to move traffic
+ * — and it costs a relay nothing to keep, being ephemeral.
+ */
+export const DEFAULT_STATUS_INTERVAL = 10;
 
 export interface GameRunner {
   readonly gameId: Hex;
@@ -122,6 +144,7 @@ export function createRunner<Config, State, Move, Patch>(
   const { module, publish, signer, clock, start, seats, lobby } = options;
   const gameId = start.id;
   const mode = lobby.mode;
+  const statusInterval = options.statusInterval ?? DEFAULT_STATUS_INTERVAL;
 
   const engine = new GameEngine(module, {
     gameId,
@@ -156,15 +179,20 @@ export function createRunner<Config, State, Move, Patch>(
     round ? [...round.accepted.values()].map((a) => a.candidate) : [];
 
   const publishStatus = async (): Promise<void> => {
-    if (!round) return;
+    if (!round || stopped) return;
     const winners = selectRevisions(candidates());
     const received: Record<Hex, ReceivedRevision> = {};
     for (const [player, winner] of winners) {
       received[player] = { rev: winner.envelope.rev, final: winner.envelope.final };
     }
+    // Recomputed per publication rather than stamped once at open: what a client
+    // needs is the time left *when this event was sent*, so that anchoring it to
+    // its own clock on receipt lands on the same instant the GM's timer will.
+    const remaining =
+      round.deadline === null ? undefined : Math.max(0, round.deadline - clock.now());
     // Always ephemeral, and carries no `p` tags: repeating them at revision
     // cadence would drown the "your turn" notification players subscribe for.
-    await publish(buildStatus({ gameId, seq: round.seq, received }));
+    await publish(buildStatus({ gameId, seq: round.seq, received, remaining }));
   };
 
   const publishHead = async (): Promise<void> => {
@@ -178,17 +206,47 @@ export function createRunner<Config, State, Move, Patch>(
     );
   };
 
-  const openRound = (seq: number, prev: Hex, awaiting: Hex[]): void => {
-    round = { seq, prev, awaiting, accepted: new Map(), timer: null, closing: false };
+  /** Keep republishing `status` until the round closes. */
+  const scheduleHeartbeat = (opened: OpenRound<Move>): void => {
+    if (statusInterval <= 0 || opened.deadline === null) return;
+    opened.heartbeat = clock.setTimeout(statusInterval, () => {
+      opened.heartbeat = null;
+      if (round !== opened || opened.closing || stopped) return;
+      // Rescheduled before publishing, not after: publishing is async, and a
+      // chain that waited for it would drift by one relay round trip per beat.
+      scheduleHeartbeat(opened);
+      void publishStatus();
+    });
+  };
 
-    if (lobby.turnTimeout > 0) {
-      const opened = round;
+  const openRound = async (seq: number, prev: Hex, awaiting: Hex[]): Promise<void> => {
+    const timed = lobby.turnTimeout > 0;
+    const opened: OpenRound<Move> = {
+      seq,
+      prev,
+      awaiting,
+      accepted: new Map(),
+      timer: null,
+      heartbeat: null,
+      deadline: timed ? clock.now() + lobby.turnTimeout : null,
+      closing: false,
+    };
+    round = opened;
+
+    if (timed) {
       opened.timer = clock.setTimeout(lobby.turnTimeout, () => {
         opened.timer = null;
         // A timeout is not a decision made offstage: it becomes a signed system
         // input on the closing delta, so replay reproduces it exactly.
         void closeRound({ type: 'timeout' });
       });
+
+      // The opening status is what starts every connected client's countdown.
+      // Without it the first news of the deadline would be the first move of the
+      // round, and a round where nobody moves — the one where the countdown
+      // matters most — would never show a clock at all.
+      scheduleHeartbeat(opened);
+      await publishStatus();
     }
   };
 
@@ -197,6 +255,7 @@ export function createRunner<Config, State, Move, Patch>(
     if (!current || current.closing || stopped || engine.isOver) return;
     current.closing = true;
     current.timer?.cancel();
+    current.heartbeat?.cancel();
 
     const all = candidates();
     const winners = selectRevisions(all);
@@ -265,7 +324,7 @@ export function createRunner<Config, State, Move, Patch>(
     if (lobby.snapshotInterval > 0 && outcome.seq % lobby.snapshotInterval === 0) {
       await publishHead();
     }
-    openRound(outcome.seq + 1, delta.id, outcome.awaiting);
+    await openRound(outcome.seq + 1, delta.id, outcome.awaiting);
   }
 
   return {
@@ -281,7 +340,7 @@ export function createRunner<Config, State, Move, Patch>(
       // The seq-0 head is what lets a client bootstrap at all: it cannot replay
       // the module (no seed until the end), so it needs a state to fold onto.
       await publishHead();
-      openRound(1, gameId, engine.awaiting);
+      await openRound(1, gameId, engine.awaiting);
     },
 
     async handleMove(event: NostrEvent): Promise<void> {
@@ -376,6 +435,7 @@ export function createRunner<Config, State, Move, Patch>(
     stop(): void {
       stopped = true;
       round?.timer?.cancel();
+      round?.heartbeat?.cancel();
       round = null;
     },
   };

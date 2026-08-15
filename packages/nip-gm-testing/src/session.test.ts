@@ -16,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 import {
   auditGame,
   buildCreate,
+  buildStatus,
   gameMessagesFilter,
   KIND,
   parseHead,
@@ -114,6 +115,41 @@ async function playToEnd(
     }
   }
   throw new Error('game did not end');
+}
+
+/**
+ * Let everything the clock kicked off finish.
+ *
+ * `gm.drain()` covers the daemon's message queue, but a clock callback (a turn
+ * timeout, a status heartbeat) publishes outside that queue, and publishing
+ * signs — a promise chain the relay's synchronous delivery still sits behind.
+ * One macrotask turn is enough to drain it.
+ */
+function settle(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/**
+ * Publish a `status` as the GM, bypassing the runner.
+ *
+ * The runner's own statuses are always self-consistent, which is exactly what a
+ * test of how a client *reconciles* them cannot use. Signed by the real GM key,
+ * so the session admits it on the same terms as any other.
+ */
+async function publishStatus(
+  table: Table,
+  gameId: string,
+  seq: number,
+  remaining: number,
+): Promise<void> {
+  const template = buildStatus({ gameId, seq, received: {}, remaining });
+  await table.relay.publish(
+    await table.gmSigner.signEvent({
+      ...template,
+      pubkey: table.gmSigner.pubkey,
+      created_at: table.clock.now(),
+    }),
+  );
 }
 
 function auditOf(table: Table, gameId: string) {
@@ -417,6 +453,119 @@ describe('timeouts', () => {
 
     session.close();
     expect(auditOf(table, gameId).ok).toBe(true);
+  });
+
+  it('reports the turn clock on status, and the client anchors it to its own clock', async () => {
+    const table = await seat(2, { turnTimeout: 60 });
+    const gameId = await startGame(table);
+    // Round 1 opened during startGame; the manual clock has not moved since.
+    const openedAt = table.clock.now();
+
+    // This session joins after the round opened, so it missed the opening
+    // status — the event is ephemeral, and there is nothing on the relay to
+    // catch up from. Nobody has moved either, so a status-on-move GM would
+    // leave this client with no clock for the entire round.
+    const session = createGameSession<OrdersView, OrdersMove>({
+      transport: table.relay,
+      module: ordersModule,
+      gm: table.gmSigner.pubkey,
+      gameId,
+      signer: table.players[0],
+      clock: table.clock,
+    });
+    await session.start();
+    expect(session.getSnapshot().deadline).toBeNull();
+
+    // The heartbeat is what rescues it.
+    table.clock.advance(10);
+    await settle();
+    expect(session.getSnapshot().deadline).toBe(openedAt + 60);
+
+    // Every republication re-anchors the same instant rather than accumulating
+    // error, which is the whole point of publishing a duration.
+    table.clock.advance(30);
+    await settle();
+    const snapshot = session.getSnapshot();
+    expect(snapshot.deadline).toBe(openedAt + 60);
+    expect(snapshot.deadline! - table.clock.now()).toBe(20);
+
+    // The GM published a duration, not a wall-clock instant.
+    const statuses = table.relay.log
+      .map((e) => parseState(e))
+      .flatMap((p) => (p.ok && p.value.type === 'status' ? [p.value] : []));
+    expect(statuses.length).toBeGreaterThan(1);
+    expect(statuses.at(-1)?.remaining).toBe(20);
+
+    // Closing the round retires the old countdown and starts the next one.
+    table.clock.advance(30);
+    await table.gm.drain();
+    await settle();
+    expect(session.getSnapshot().seq).toBe(1);
+    expect(session.getSnapshot().deadline).toBe(table.clock.now() + 60);
+
+    session.close();
+  });
+
+  it('holds the countdown steady through a second of clock rounding', async () => {
+    const table = await seat(2, { turnTimeout: 60 });
+    const gameId = await startGame(table);
+
+    const session = createGameSession<OrdersView, OrdersMove>({
+      transport: table.relay,
+      module: ordersModule,
+      gm: table.gmSigner.pubkey,
+      gameId,
+      signer: table.players[0],
+      clock: table.clock,
+    });
+    await session.start();
+    table.clock.advance(10);
+    await settle();
+
+    const held = session.getSnapshot().deadline;
+    expect(held).not.toBeNull();
+
+    // Two second-granular clocks anchoring the same instant can land a second
+    // apart, and a countdown that took every anchor literally would stutter.
+    await publishStatus(table, gameId, 1, held! - table.clock.now() - 1);
+    expect(session.getSnapshot().deadline).toBe(held);
+
+    // A real change is a real change, though — a GM that shortens the round has
+    // to be believed.
+    await publishStatus(table, gameId, 1, 5);
+    expect(session.getSnapshot().deadline).toBe(table.clock.now() + 5);
+
+    session.close();
+  });
+
+  it('leaves the deadline null in an untimed game, and publishes no countdown', async () => {
+    const table = await seat(2);
+    const gameId = await startGame(table);
+
+    const session = createGameSession<OrdersView, OrdersMove>({
+      transport: table.relay,
+      module: ordersModule,
+      gm: table.gmSigner.pubkey,
+      gameId,
+      signer: table.players[0],
+      clock: table.clock,
+    });
+    await session.start();
+
+    await session.commit({ type: 'hold' });
+    await table.gm.drain();
+
+    const statuses = table.relay.log
+      .map((e) => parseState(e))
+      .flatMap((p) => (p.ok && p.value.type === 'status' ? [p.value] : []));
+    expect(statuses.length).toBeGreaterThan(0);
+    expect(statuses.every((s) => s.remaining === undefined)).toBe(true);
+    expect(session.getSnapshot().deadline).toBeNull();
+    // Nothing to fire and nothing to republish: an untimed round schedules no
+    // timers at all.
+    expect(table.clock.pending).toBe(0);
+
+    session.close();
   });
 });
 

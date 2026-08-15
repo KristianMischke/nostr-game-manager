@@ -56,6 +56,8 @@ export interface GMOptions {
   /** Injected so tests run instantly and wall-clock never leaks into replay. */
   clock?: Clock;
   lobbyDefaults?: Partial<LobbyDefaults>;
+  /** See {@link RunnerOptions.statusInterval}. Seconds; 0 disables the heartbeat. */
+  statusInterval?: number;
 }
 
 export interface GM {
@@ -124,6 +126,7 @@ export function createGM(options: GMOptions): GM {
           config: module.parseConfig(managed.lobby.config.config),
           commitment: managed.commitment,
           lobby: managed.lobby.config,
+          statusInterval: options.statusInterval,
           onEnd: (gameId) => runners.delete(gameId),
         });
 

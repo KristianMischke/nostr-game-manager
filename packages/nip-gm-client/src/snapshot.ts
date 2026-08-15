@@ -81,6 +81,21 @@ export interface GameSnapshot<State = unknown, Move = unknown> {
    * "4 of 6 locked in" indicator. Empty when the GM publishes no status.
    */
   received: Record<Hex, { rev: number; final: boolean }>;
+  /**
+   * When the open round times out, on **this client's clock** (unix seconds).
+   *
+   * Null for an untimed round, and until the first `status` of a round arrives.
+   * The GM reports a duration, not an instant (NIP-GM §Round status); the
+   * session adds it to the local clock on receipt so a UI can count down
+   * without caring how far the two machines' clocks are apart. Each status
+   * re-anchors it, so the value converges rather than drifting with a browser
+   * timer.
+   *
+   * It is an estimate, out by the event's flight time, and it is not the
+   * authority on anything: the GM closes its own rounds. Nothing but a
+   * countdown should be driven from it.
+   */
+  deadline: number | null;
 
   error: ProtocolError | null;
   /** Set once the game has ended. */

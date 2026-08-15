@@ -97,9 +97,25 @@ function emptySnapshot<View, Move>(gameId: Hex): GameSnapshot<View, Move> {
     sync: 'local',
     ackedRev: -1,
     received: {},
+    deadline: null,
     error: null,
     result: null,
   };
+}
+
+/**
+ * The deadline to hold after a fresh `status`.
+ *
+ * Both clocks involved tick in whole seconds — the GM's when it computes what
+ * remains, this client's when it anchors that duration — so two anchors of the
+ * *same* instant can land a second apart. Taking every one of them literally
+ * makes a countdown that stutters back and forth by a second on each heartbeat.
+ * A move of a second or less is that rounding, not news; anything larger is the
+ * GM saying something changed and is taken at face value.
+ */
+function reanchor(held: number | null, next: number | null): number | null {
+  if (next === null || held === null) return next;
+  return Math.abs(next - held) <= 1 ? held : next;
 }
 
 export function createGameSession<View, Move>(
@@ -179,6 +195,10 @@ export function createGameSession<View, Move>(
       // A new round means a new revision stream; last round's acks are stale.
       ackedRev: -1,
       received: {},
+      // As is its countdown. The GM publishes a status as it opens the new
+      // round, so the gap is one relay hop, and showing no clock for that hop
+      // beats showing the previous round's.
+      deadline: null,
       pending: null,
     });
     openRound(delta.seq + 1, eventId, delta.awaiting);
@@ -244,7 +264,14 @@ export function createGameSession<View, Move>(
         // ever touches acknowledgement fields — never state, never seq.
         if (state.seq !== store.getSnapshot().seq + 1) return;
         const mine = me ? state.received[me] : undefined;
-        refresh({ received: state.received, ackedRev: mine ? mine.rev : -1 });
+        // Anchored to the local clock at receipt, so a client whose clock is
+        // minutes off the GM's still counts down the right number of seconds.
+        const anchored = state.remaining === undefined ? null : clock.now() + state.remaining;
+        refresh({
+          received: state.received,
+          ackedRev: mine ? mine.rev : -1,
+          deadline: reanchor(store.getSnapshot().deadline, anchored),
+        });
         return;
       }
 
@@ -264,6 +291,7 @@ export function createGameSession<View, Move>(
           status: state.type === 'end' ? 'ended' : 'aborted',
           awaiting: [],
           pending: null,
+          deadline: null,
           result: (state.content.result ?? null) as GameResult | null,
         });
         return;

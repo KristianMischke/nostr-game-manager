@@ -148,6 +148,16 @@ export interface RoundStatus {
   seq: number;
   /** Player pubkey → the highest revision the GM has accepted from them. */
   received: Record<Hex, ReceivedRevision>;
+  /**
+   * Seconds left before the GM closes this round on its turn timeout. Absent
+   * when the round is untimed.
+   *
+   * Relative, not an absolute deadline, and deliberately so: a client's clock is
+   * routinely minutes off the GM's, and a wall-clock deadline would be wrong by
+   * exactly that much. A duration is only wrong by the event's flight time, so a
+   * client anchors it against its own clock on receipt and counts down locally.
+   */
+  remaining?: number;
 }
 
 export type GameState = GameStart | GameDelta | GamePrivate | GameEnd | RoundStatus;
@@ -205,13 +215,18 @@ export function buildDelta(
 }
 
 export function buildStatus(status: Omit<RoundStatus, 'type'>, relay?: string): EventTemplate {
+  const content: Record<string, unknown> = { seq: status.seq, received: status.received };
+  // Omitted rather than sent as null for an untimed round: absent means "no
+  // deadline", which is what a client with nothing to count down needs to see.
+  if (status.remaining !== undefined) content.remaining = Math.max(0, Math.round(status.remaining));
+
   return {
     // Always ephemeral — see stateKindFor. Deliberately no `p` tags: they mean
     // "you must act" on a delta, and repeating them at status cadence would
     // drown the turn notification a player actually subscribes for.
     kind: stateKindFor('verified', 'status'),
     tags: [['state', 'status'], rootTag(status.gameId, relay), ['seq', String(status.seq)]],
-    content: JSON.stringify({ seq: status.seq, received: status.received }),
+    content: JSON.stringify(content),
   };
 }
 
@@ -387,7 +402,15 @@ export function parseState(event: NostrEvent): ParseResult<GameState> {
       if (seq === undefined) return fail('bad_seq');
       if (Number.isSafeInteger(raw.seq) && raw.seq !== seq) return fail('seq_mismatch');
 
-      return ok({ type: 'status', gameId, seq, received: parseReceived(raw.received) });
+      // Dropped rather than clamped when it is not a plain non-negative number:
+      // a garbled duration would drive a countdown that is confidently wrong,
+      // where an absent one leaves the client showing "untimed" and honest.
+      const remaining =
+        typeof raw.remaining === 'number' && Number.isFinite(raw.remaining) && raw.remaining >= 0
+          ? raw.remaining
+          : undefined;
+
+      return ok({ type: 'status', gameId, seq, received: parseReceived(raw.received), remaining });
     }
 
     case 'end':
