@@ -134,6 +134,15 @@ export function createGameSession<View, Move>(
 
   /** Deltas that arrived out of order, held until the chain reaches them. */
   const buffered = new Map<number, { delta: GameDelta; id: Hex }>();
+  /**
+   * Ids of the revisions published for the open round.
+   *
+   * What makes a GM response addressable to this session — see `onResponse`.
+   * Cleared as each round opens, because a rejection of a revision from a round
+   * that has already closed is a fact about history, not something the player
+   * can still do anything about.
+   */
+  const published = new Set<Hex>();
   /** Set once the head (or the start event) has given us something to fold onto. */
   let bootstrapped = false;
 
@@ -161,6 +170,7 @@ export function createGameSession<View, Move>(
   const openRound = (seq: number, prev: Hex, awaiting: Hex[]): void => {
     if (!composer || !me) return;
     composer.close();
+    published.clear();
     if (awaiting.includes(me)) composer.open(seq, prev);
   };
 
@@ -192,6 +202,11 @@ export function createGameSession<View, Move>(
       seq: delta.seq,
       prev: eventId,
       awaiting: delta.awaiting,
+      // A round closed and its patch folded, so whatever went wrong belonged to
+      // a round that is over. Errors here describe the game's current state,
+      // not its history — leaving one set meant a client that hit a single
+      // rejection displayed it for the rest of the game.
+      error: null,
       // A new round means a new revision stream; last round's acks are stale.
       ackedRev: -1,
       received: {},
@@ -212,6 +227,80 @@ export function createGameSession<View, Move>(
       buffered.delete(next.delta.seq);
       applyDelta(next.delta, next.id);
     }
+  };
+
+  /* --- the head ----------------------------------------------------------- */
+
+  /**
+   * Take a head event as this session's starting view.
+   *
+   * Returns whether it did, so a caller waiting for one knows to stop waiting.
+   */
+  const bootstrapFromHead = (event: NostrEvent): boolean => {
+    if (bootstrapped || event.pubkey !== gm) return false;
+    const head = parseHead(event);
+    if (!head.ok) return false;
+
+    bootstrapped = true;
+    refresh({
+      // Taken as-is, NOT through `deserialize`. The head carries what
+      // `redact` produced (see `publishHead` in the runner), and `redact`
+      // output is not `serialize` output — `deserialize` is the inverse of
+      // the latter only. Feeding one to the other happens to work for a
+      // module whose `State` is already a plain object, and breaks for a
+      // module whose `State` is a class. It also has to be the redacted
+      // view for `applyPatch` to fold onto, which the module contract is
+      // explicit about.
+      state: head.value.state as View,
+      seq: head.value.seq,
+      // At seq 0 the state was made against the start event itself.
+      prev: head.value.seq === 0 ? gameId : store.getSnapshot().prev,
+      // Whatever `watchForHead` was complaining about is no longer true.
+      error: store.getSnapshot().error?.code === 'no_head' ? null : store.getSnapshot().error,
+    });
+
+    if (head.value.seq === 0) {
+      const seats = store.getSnapshot().seats;
+      const awaiting = module.awaitingAtStart?.(seats) ?? [...seats];
+      refresh({ awaiting });
+      openRound(1, gameId, awaiting);
+    }
+
+    // Deltas that arrived while there was nothing to fold them onto.
+    drain();
+    return true;
+  };
+
+  /**
+   * Keep watching for a head that has not been published yet.
+   *
+   * A game with no head is usually a game that is one relay hop away from
+   * having one: the GM publishes it as it opens the game and again after every
+   * round, so a client that followed a lobby into a game is racing the very
+   * first one. Reporting `no_head` and stopping there left that client parked
+   * on the error for good, with the head landing on the relay seconds later and
+   * nothing looking at it.
+   *
+   * So the error now says what is missing *while* this keeps looking, and
+   * clears itself the moment a head arrives.
+   */
+  const watchForHead = (): void => {
+    setError('no_head', 'the GM has not published a snapshot for this game yet — still looking');
+
+    // Held in a box rather than a variable the handler closes over: a transport
+    // that delivers stored events synchronously calls `onEvent` before
+    // `subscribe` has returned, so the handler cannot count on the handle
+    // existing yet — hence the second `close()` below for that case.
+    const watch: { sub?: Subscription; done: boolean } = { done: false };
+    watch.sub = transport.subscribe([headFilter(gm, gameId)], {
+      onEvent: (event) => {
+        if (!bootstrapFromHead(event)) return;
+        watch.done = true;
+        watch.sub?.close();
+      },
+    });
+    if (watch.done) watch.sub.close();
+    else subscriptions.push(watch.sub);
   };
 
   const onState = (event: NostrEvent): void => {
@@ -299,9 +388,26 @@ export function createGameSession<View, Move>(
     }
   };
 
+  /**
+   * Rejections this session is entitled to act on.
+   *
+   * `myResponsesFilter` is per-player, not per-game, and kind 2600 is stored:
+   * subscribing to it hands a client every rejection the GM has ever addressed
+   * to it, for every game it has ever played, replayed in full on each reload.
+   * Surfacing those meant a fresh session for a fresh game opening on last
+   * week's `not_your_piece`, with nothing able to clear it because nothing had
+   * gone wrong.
+   *
+   * So a rejection has to be answerable *here*: same game, and targeting a
+   * revision this session published in the round that is still open. Anything
+   * else is history — the composer would refuse to act on it too, since its
+   * `reject` only matches the revision currently pending.
+   */
   const onResponse = (event: NostrEvent): void => {
     const parsed = parseMessage(event);
     if (!parsed.ok || parsed.value.action !== 'response') return;
+    if (parsed.value.gameId !== undefined && parsed.value.gameId !== gameId) return;
+    if (!published.has(parsed.value.target)) return;
     const body = parseResponseBody(parsed.value.content);
     if (!body.ok || body.value.status !== 'rejected') return;
     setError('move_rejected', body.value.reason, parsed.value.target);
@@ -339,7 +445,10 @@ export function createGameSession<View, Move>(
             }
             return module.encodeMove(move);
           },
-          onPublished: (pending) => refresh({ pending: pending as PendingMove<Move> }),
+          onPublished: (pending) => {
+            published.add(pending.id);
+            refresh({ pending: pending as PendingMove<Move> });
+          },
           onError: (error) => setError('publish_failed', error.message),
         });
       }
@@ -354,30 +463,7 @@ export function createGameSession<View, Move>(
 
       for (const event of starts) onState(event);
 
-      const head = heads[0] && parseHead(heads[0]);
-      if (head && head.ok && heads[0].pubkey === gm) {
-        bootstrapped = true;
-        refresh({
-          // Taken as-is, NOT through `deserialize`. The head carries what
-          // `redact` produced (see `publishHead` in the runner), and `redact`
-          // output is not `serialize` output — `deserialize` is the inverse of
-          // the latter only. Feeding one to the other happens to work for a
-          // module whose `State` is already a plain object, and breaks for a
-          // module whose `State` is a class. It also has to be the redacted
-          // view for `applyPatch` to fold onto, which the module contract is
-          // explicit about.
-          state: head.value.state as View,
-          seq: head.value.seq,
-          // At seq 0 the state was made against the start event itself.
-          prev: head.value.seq === 0 ? gameId : store.getSnapshot().prev,
-        });
-        if (head.value.seq === 0) {
-          const seats = store.getSnapshot().seats;
-          const awaiting = module.awaitingAtStart?.(seats) ?? [...seats];
-          refresh({ awaiting });
-          openRound(1, gameId, awaiting);
-        }
-      }
+      if (heads[0]) bootstrapFromHead(heads[0]);
 
       if (closed) return;
       subscriptions.push(transport.subscribe([gameFilter(gameId, { mode })], { onEvent: onState }));
@@ -389,9 +475,7 @@ export function createGameSession<View, Move>(
 
       drain();
 
-      if (!bootstrapped) {
-        setError('no_head', 'the GM has published no head snapshot, so no view can be built');
-      }
+      if (!bootstrapped) watchForHead();
     },
 
     close(): void {

@@ -22,6 +22,7 @@ import {
   parseHead,
   parseState,
   type NostrEvent,
+  type Transport,
 } from 'nip-gm-core';
 import { createGM } from 'nip-gm-gm';
 import { createGameSession, createLobbySession } from 'nip-gm-client';
@@ -150,6 +151,53 @@ async function publishStatus(
       created_at: table.clock.now(),
     }),
   );
+}
+
+/**
+ * Publish the game's head again as the GM, one second later.
+ *
+ * What the daemon does after every round; done by hand so a test can choose
+ * when a head lands instead of having to play a round to produce one.
+ */
+async function republishHead(table: Table, gameId: string): Promise<void> {
+  const held = table.relay.stored([{ kinds: [KIND.GAME_HEAD], '#d': [gameId] }])[0];
+  await table.relay.publish(
+    await table.gmSigner.signEvent({
+      kind: held.kind,
+      tags: held.tags,
+      content: held.content,
+      pubkey: table.gmSigner.pubkey,
+      created_at: held.created_at + 1,
+    }),
+  );
+}
+
+/**
+ * A view of the relay that has not caught up on head snapshots.
+ *
+ * Withheld at the transport, which is where the real version of this happens: a
+ * client that follows a lobby into a game races the GM's first head, and a relay
+ * that has not received it yet answers exactly like one that never will.
+ * `release` is that relay catching up.
+ */
+function withholdHeads(relay: MemoryRelay): Transport & { release(): void } {
+  let withheld = true;
+  const hidden = (event: NostrEvent): boolean => withheld && event.kind === KIND.GAME_HEAD;
+
+  return {
+    publish: (event) => relay.publish(event),
+    query: async (filters) => (await relay.query(filters)).filter((event) => !hidden(event)),
+    subscribe: (filters, handlers) =>
+      relay.subscribe(filters, {
+        ...handlers,
+        onEvent: (event) => {
+          if (!hidden(event)) handlers.onEvent(event);
+        },
+      }),
+    release: () => {
+      withheld = false;
+    },
+  };
 }
 
 function auditOf(table: Table, gameId: string) {
@@ -375,7 +423,61 @@ describe('revisions over the wire', () => {
     await table.gm.drain();
     expect(sessions[0].getSnapshot().pending).not.toBeNull();
 
+    // Once the round closes, the rejection is history: it described a move in a
+    // round that is over, and the error field describes the game now. Left set,
+    // it followed the player for the rest of the game — a red bar over a board
+    // where nothing was wrong.
+    await sessions[1].commit({ type: 'hold' });
+    await table.gm.drain();
+    expect(sessions[0].getSnapshot().seq).toBe(2);
+    expect(sessions[0].getSnapshot().error).toBeNull();
+
     for (const session of sessions) session.close();
+  });
+
+  it('ignores rejections the relay replays from other games and older sessions', async () => {
+    const table = await seat(2);
+    const gameId = await startGame(table);
+
+    const open = (signer: MemorySigner, game: string) =>
+      createGameSession<OrdersView, OrdersMove>({
+        transport: table.relay,
+        module: ordersModule,
+        gm: table.gmSigner.pubkey,
+        gameId: game,
+        signer,
+        clock: table.clock,
+      });
+
+    const sessions = table.players.map((signer) => open(signer, gameId));
+    for (const session of sessions) await session.start();
+
+    for (const session of sessions) {
+      await session.commit({ type: 'advance', distance: 3 });
+      await table.gm.drain();
+    }
+    await sessions[0].commit({ type: 'advance', distance: 3 });
+    await table.gm.drain();
+    expect(sessions[0].getSnapshot().error?.code).toBe('move_rejected');
+    for (const session of sessions) session.close();
+
+    // The rejection is a stored kind-2600 event, and `myResponsesFilter` selects
+    // on recipient and author — not on game. So every session this player opens
+    // from now on is handed that rejection again the moment it subscribes.
+    //
+    // A reload of the same game:
+    const reloaded = open(table.players[0], gameId);
+    await reloaded.start();
+    expect(reloaded.getSnapshot().error).toBeNull();
+    reloaded.close();
+
+    // ...and an entirely different game, which is where it was most obviously
+    // wrong: a fresh board opening on a rejection from a game already over.
+    const otherGameId = await startGame(table);
+    const other = open(table.players[0], otherGameId);
+    await other.start();
+    expect(other.getSnapshot().error).toBeNull();
+    other.close();
   });
 
   it('rejects a revision that does not beat what the GM already holds', async () => {
@@ -648,6 +750,49 @@ describe('spectators and head snapshots', () => {
     rejoined.close();
   });
 
+  it('keeps looking for a head that has not arrived, and joins the game when it does', async () => {
+    const table = await seat(2);
+    const gameId = await startGame(table);
+
+    const relay = withholdHeads(table.relay);
+    const session = createGameSession<OrdersView, OrdersMove>({
+      transport: relay,
+      module: ordersModule,
+      gm: table.gmSigner.pubkey,
+      gameId,
+      signer: table.players[0],
+      clock: table.clock,
+    });
+    await session.start();
+
+    // Nothing to fold onto, so the session says so — but it is a statement
+    // about right now, not a verdict. Before, it was a verdict: the error was
+    // set once and nothing ever looked for a head again, so a client that lost
+    // this race sat on "the GM has published no snapshot" while the head it was
+    // describing lay on the relay.
+    expect(session.getSnapshot().error?.code).toBe('no_head');
+    expect(session.getSnapshot().state).toBeUndefined();
+    const watching = table.relay.subscriptions;
+
+    relay.release();
+    await republishHead(table, gameId);
+
+    const snapshot = session.getSnapshot();
+    expect(snapshot.error).toBeNull();
+    expect(snapshot.state).toBeDefined();
+    // Watching stops once there is something to watch for no longer.
+    expect(table.relay.subscriptions).toBe(watching - 1);
+
+    // And this is a player, not a spectator who happens to have a view: round 1
+    // is open and it can move in it.
+    expect(snapshot.needsMyMove).toBe(true);
+    await session.commit({ type: 'hold' });
+    await table.gm.drain();
+    expect(session.getSnapshot().pending).not.toBeNull();
+
+    session.close();
+  });
+
   it('publishes a redacted head, not the GM’s full state', async () => {
     const table = await seat(2, { snapshotInterval: 1 });
     const gameId = await startGame(table);
@@ -918,7 +1063,7 @@ describe('same-second republication', () => {
     // races anything, and its timestamp is evidence. Inflating those to keep a
     // counter monotonic would corrupt the record an auditor reads.
     const table = await seat(2);
-    const gameId = await startGame(table);
+    await startGame(table);
     const now = table.clock.now();
 
     const regular = table.relay.log.filter(
