@@ -910,6 +910,51 @@ describe('GM policy', () => {
     // And no lobby was opened under a substituted default.
     expect(table.relay.stored([{ kinds: [KIND.LOBBY] }])).toHaveLength(0);
   });
+
+  it('keeps a move rejection out of the lobby a player opens afterwards', async () => {
+    const table = await seat(2);
+    const gameId = await startGame(table);
+
+    const sessions = table.players.map((signer) =>
+      createGameSession<OrdersView, OrdersMove>({
+        transport: table.relay,
+        module: ordersModule,
+        gm: table.gmSigner.pubkey,
+        gameId,
+        signer,
+        clock: table.clock,
+      }),
+    );
+    for (const session of sessions) await session.start();
+
+    // Earn a rejection: a second final revision for a round the GM has already
+    // taken this player's move for.
+    for (const session of sessions) {
+      await session.commit({ type: 'advance', distance: 3 });
+      await table.gm.drain();
+    }
+    await sessions[0].commit({ type: 'advance', distance: 3 });
+    await table.gm.drain();
+    expect(sessions[0].getSnapshot().error?.code).toBe('move_rejected');
+    for (const session of sessions) session.close();
+
+    // That rejection is a stored kind-2600 event and `myResponsesFilter` selects
+    // on recipient and author only, so the next lobby session this player opens
+    // is handed it the moment it subscribes. It is not news about the lobby —
+    // it is not about a lobby at all.
+    const lobby = createLobbySession({
+      transport: table.relay,
+      signer: table.players[0],
+      gm: table.gmSigner.pubkey,
+      clock: table.clock,
+    });
+    const address = await lobby.create(ordersModule.id, CONFIG);
+    await table.gm.drain();
+
+    expect(lobby.getSnapshot().error).toBeNull();
+    expect(lobby.getSnapshot().lobby?.lobbyId).toBe(address.identifier);
+    lobby.close();
+  });
 });
 
 describe('start conditions', () => {

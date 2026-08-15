@@ -114,6 +114,15 @@ export function createLobbySession(options: LobbySessionOptions): LobbySession {
     Hex,
     { resolve(address: AddressPointer): void; reject(error: Error): void }
   >();
+  /**
+   * Ids of the lobby actions this session published.
+   *
+   * What makes a GM response addressable to this session — see `onResponse`.
+   * Cleared when a different lobby is watched, since a rejection of an action
+   * taken against the lobby you just left is not news about the one you are
+   * looking at.
+   */
+  const published = new Set<Hex>();
 
   const sign = async (template: {
     kind: number;
@@ -130,6 +139,7 @@ export function createLobbySession(options: LobbySessionOptions): LobbySession {
     content: string;
   }): Promise<NostrEvent> => {
     const event = await sign(template);
+    published.add(event.id);
     await transport.publish(event);
     return event;
   };
@@ -148,10 +158,25 @@ export function createLobbySession(options: LobbySessionOptions): LobbySession {
     });
   };
 
+  /**
+   * Responses this session is entitled to act on.
+   *
+   * `myResponsesFilter` is per-player, not per-lobby, and kind 2600 is stored:
+   * subscribing to it hands a client every response the GM has ever addressed to
+   * it — including the rejection of a *move* in a game played last week, which
+   * is not a fact about any lobby. Surfacing those put `not_your_piece` on the
+   * lobby screen, with nothing able to clear it because nothing was wrong.
+   *
+   * So a response has to be answerable here: no game id on it, and targeting a
+   * message this session published against the lobby it is watching. The game
+   * session applies the mirror image of this test — see its `onResponse`.
+   */
   const onResponse = (event: NostrEvent): void => {
     if (event.pubkey !== gm) return;
     const parsed = parseMessage(event);
     if (!parsed.ok || parsed.value.action !== 'response') return;
+    if (parsed.value.gameId !== undefined) return;
+    if (!published.has(parsed.value.target)) return;
 
     const waiter = awaitingResponse.get(parsed.value.target);
     const body = parseResponseBody(parsed.value.content);
@@ -192,6 +217,7 @@ export function createLobbySession(options: LobbySessionOptions): LobbySession {
 
   const watch = async (address: AddressPointer): Promise<void> => {
     await ensureResponseSub();
+    if (watching && formatAddress(watching) !== formatAddress(address)) published.clear();
     watching = address;
     store.set({ ...store.getSnapshot(), address });
 
@@ -221,6 +247,9 @@ export function createLobbySession(options: LobbySessionOptions): LobbySession {
     const settled = new Promise<AddressPointer>((resolve, reject) => {
       awaitingResponse.set(event.id, { resolve, reject });
     });
+    // Signed here rather than through `publish`, so the id has to be recorded
+    // here too — an unrecorded request is one whose answer `onResponse` drops.
+    published.add(event.id);
     await transport.publish(event);
 
     const address = await settled;
@@ -257,6 +286,7 @@ export function createLobbySession(options: LobbySessionOptions): LobbySession {
       for (const sub of subscriptions) sub.close();
       subscriptions.length = 0;
       awaitingResponse.clear();
+      published.clear();
     },
   };
 }
