@@ -16,10 +16,14 @@
  * and it costs nothing: a turn-based GM is never throughput-bound.
  */
 import {
+  announcementAddress,
   buildAnnouncement,
+  buildDiscoveryOffer,
   buildResponse,
+  discoveryFilter,
   inboxFilter,
   parseCreateRequest,
+  parseDiscovery,
   parseMessage,
   systemClock,
   verifyEvent,
@@ -40,6 +44,16 @@ import {
 import { mayCreate, type GMPolicy } from './policy.js';
 import { createPublisher } from './publisher.js';
 import { createRunner, type GameRunner } from './runner.js';
+
+/**
+ * What a GM with no `maxConcurrentGames` reports as its capacity.
+ *
+ * The offer's `capacity` is a count, and the wire has no way to say "unbounded".
+ * Clients compare it against zero — full or not — so any comfortably large
+ * number says the true thing; this one is picked to look like what it is rather
+ * than like a real tally.
+ */
+const UNBOUNDED_CAPACITY = 999;
 
 export interface GMOptions {
   modules: AnyGameModule[];
@@ -134,6 +148,51 @@ export function createGM(options: GMOptions): GM {
         await runner.open();
       },
     });
+
+  /**
+   * Answer a discovery request, which is how a client learns this GM is up.
+   *
+   * An announcement (kind 32600) is addressable and outlives the process that
+   * wrote it: it is published once at startup and sits on the relay whether or
+   * not the daemon is still running, so a directory built from announcements
+   * alone lists yesterday's GMs beside today's with nothing to tell them apart.
+   * The offer is the part only a live GM can produce — NIP-GM §Discovery calls
+   * it a liveness/capacity signal, and both kinds are ephemeral, so nothing here
+   * leaves a trace on the relay.
+   *
+   * The request's `version` tag is not matched against the module's. Version
+   * negotiation belongs to the announcement, which the spec makes the source of
+   * truth for compatibility; refusing to answer an incompatible client would
+   * only tell it "offline" when the truth is "here, but not for you".
+   */
+  async function answerDiscovery(event: NostrEvent): Promise<void> {
+    if (!pubkey || event.pubkey === pubkey || !verifyEvent(event)) return;
+
+    const parsed = parseDiscovery(event);
+    if (!parsed.ok || parsed.value.type !== 'request') return;
+
+    const module = modules.get(parsed.value.game);
+    if (!module) return;
+
+    // Answered per requester, not in general: `mayCreate` also decides
+    // allowlists, so a player this GM would refuse hears "up, and full" rather
+    // than being counted as one of its open seats.
+    const decision = mayCreate(policy, event.pubkey, runners.size);
+    const capacity = !decision.ok
+      ? 0
+      : policy.maxConcurrentGames === undefined
+        ? UNBOUNDED_CAPACITY
+        : Math.max(0, policy.maxConcurrentGames - runners.size);
+
+    await publish(
+      buildDiscoveryOffer({
+        requestId: event.id,
+        player: event.pubkey,
+        announcement: announcementAddress(pubkey, module.id),
+        capacity,
+      }),
+    );
+  }
 
   async function handle(event: NostrEvent): Promise<void> {
     if (!verifyEvent(event)) return;
@@ -240,6 +299,14 @@ export function createGM(options: GMOptions): GM {
       subscriptions.push(
         transport.subscribe([inboxFilter(pubkey)], {
           onEvent: (event) => enqueue(() => handle(event)),
+        }),
+      );
+
+      // Queued like everything else, so an offer's capacity is read after the
+      // messages that arrived before the request, not in the middle of one.
+      subscriptions.push(
+        transport.subscribe([discoveryFilter()], {
+          onEvent: (event) => enqueue(() => answerDiscovery(event)),
         }),
       );
     },

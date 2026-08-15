@@ -16,11 +16,15 @@ import { describe, expect, it } from 'vitest';
 import {
   auditGame,
   buildCreate,
+  buildDiscoveryRequest,
   buildStatus,
   gameMessagesFilter,
   KIND,
+  offersFilter,
+  parseDiscovery,
   parseHead,
   parseState,
+  type DiscoveryOffer,
   type NostrEvent,
   type Transport,
 } from 'nip-gm-core';
@@ -954,6 +958,87 @@ describe('GM policy', () => {
     expect(lobby.getSnapshot().error).toBeNull();
     expect(lobby.getSnapshot().lobby?.lobbyId).toBe(address.identifier);
     lobby.close();
+  });
+});
+
+describe('discovery', () => {
+  /**
+   * Ask every GM on the relay whether it is there, the way a client does.
+   *
+   * Subscribed before publishing, deliberately: both kinds are ephemeral, so an
+   * offer sent before the subscription exists is not stored anywhere to be
+   * caught up on later.
+   */
+  async function probe(
+    table: Table,
+    player: MemorySigner,
+    game = ordersModule.id,
+  ): Promise<DiscoveryOffer[]> {
+    const request = await player.signEvent({
+      ...buildDiscoveryRequest(game, ordersModule.version),
+      pubkey: player.pubkey,
+      created_at: table.clock.now(),
+    });
+
+    const offers: DiscoveryOffer[] = [];
+    const sub = table.relay.subscribe([offersFilter(request.id)], {
+      onEvent: (event) => {
+        if (event.pubkey !== table.gmSigner.pubkey) return;
+        const parsed = parseDiscovery(event);
+        if (parsed.ok && parsed.value.type === 'offer') offers.push(parsed.value);
+      },
+    });
+
+    await table.relay.publish(request);
+    await table.gm.drain();
+    sub.close();
+    return offers;
+  }
+
+  it('answers a request, so a client can tell a live GM from a stale announcement', async () => {
+    const table = await seat(2);
+    const [offer, ...rest] = await probe(table, table.players[0]);
+
+    expect(rest).toHaveLength(0);
+    expect(offer.player).toBe(table.players[0].pubkey);
+    // The announcement it points at is the one this GM published at startup.
+    expect(offer.announcement).toEqual({
+      kind: KIND.GM_ANNOUNCEMENT,
+      pubkey: table.gmSigner.pubkey,
+      identifier: ordersModule.id,
+    });
+    expect(offer.capacity).toBeGreaterThan(0);
+
+    // Ephemeral both ways: the handshake proves the GM is up *now*, so leaving
+    // an answer on the relay for tomorrow would defeat the point of it.
+    expect(table.relay.stored([{ kinds: [KIND.DISCOVERY] }])).toHaveLength(0);
+  });
+
+  it('says nothing about a game module it does not host', async () => {
+    const table = await seat(2);
+    expect(await probe(table, table.players[0], 'com.example.nothing')).toHaveLength(0);
+  });
+
+  it('reports zero capacity rather than silence when it will not open a lobby', async () => {
+    const relay = createMemoryRelay();
+    const clock = createManualClock();
+    const gmSigner = signerFromSeed(1);
+    const player = signerFromSeed(2);
+    const gm = createGM({
+      modules: [ordersModule],
+      signer: gmSigner,
+      transport: relay,
+      clock,
+      policy: { allowCreate: 'nobody' },
+    });
+    await gm.start();
+
+    // A GM that answered nothing here would be indistinguishable from one that
+    // is switched off, and a client would go on offering it as a place to play.
+    const [offer] = await probe({ relay, clock, gm, gmSigner, players: [player] }, player);
+    expect(offer.capacity).toBe(0);
+
+    await gm.stop();
   });
 });
 

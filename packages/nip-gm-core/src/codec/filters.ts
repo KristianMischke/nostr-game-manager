@@ -88,6 +88,22 @@ export function offersFilter(requestId: Hex): Filter {
   return { kinds: [KIND.DISCOVERY], '#e': [requestId] };
 }
 
+/**
+ * Discovery traffic — what a GM listens on to answer requests.
+ *
+ * Deliberately untagged. A request carries `["game", ...]`, which is a
+ * multi-character tag no relay is obliged to index, and a GM that filtered on it
+ * would answer nothing at all on a relay that does not — the one failure mode
+ * worth avoiding here, since silence from a live GM reads to a client as "this
+ * GM is down". The kind is ephemeral and its volume is one event per client
+ * poll, so taking the lot and discriminating after `parseDiscovery` costs
+ * nothing. Offers (this GM's own, and other GMs') match too; they parse as
+ * offers and are ignored.
+ */
+export function discoveryFilter(): Filter {
+  return { kinds: [KIND.DISCOVERY] };
+}
+
 /** Lobby address for a GM and lobby id. */
 export function lobbyAddress(gm: Hex, lobbyId: string): AddressPointer {
   return { kind: KIND.LOBBY, pubkey: gm, identifier: lobbyId };
