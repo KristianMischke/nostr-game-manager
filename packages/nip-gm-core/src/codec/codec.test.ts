@@ -10,7 +10,9 @@ import {
   buildMove,
   buildResponse,
   formatCreateRequest,
+  formatJoinRequest,
   parseCreateRequest,
+  parseJoinRequest,
   parseMessage,
   parseResponseBody,
 } from './message.js';
@@ -346,6 +348,42 @@ describe('messages (2600)', () => {
       });
       expect(parseCreateRequest(JSON.stringify({ code: 42 })).ok).toBe(false);
       expect(parseCreateRequest('not json').ok).toBe(false);
+    });
+  });
+
+  describe('join request body', () => {
+    it('round-trips a code', () => {
+      expect(parseJoinRequest(formatJoinRequest({ code: 'hunter2' }))).toEqual({
+        ok: true,
+        value: { code: 'hunter2' },
+      });
+    });
+
+    it('treats an empty body as a join with nothing to say', () => {
+      // What `buildLobbyAction` sends by default, and so what every public
+      // lobby join looks like. Failing to parse it would turn the ordinary
+      // case into a rejection.
+      expect(parseJoinRequest('')).toEqual({ ok: true, value: {} });
+      expect(parseJoinRequest('   ')).toEqual({ ok: true, value: {} });
+      expect(parseJoinRequest('{}')).toEqual({ ok: true, value: {} });
+      expect(formatJoinRequest({})).toBe('');
+    });
+
+    it('rejects a malformed body rather than reading it as codeless', () => {
+      expect(parseJoinRequest(JSON.stringify({ code: 42 }))).toEqual({
+        ok: false,
+        error: 'bad_code',
+      });
+      expect(parseJoinRequest('not json').ok).toBe(false);
+    });
+
+    it('keeps an empty-string code, which is not the same as no code', () => {
+      // A GM gates on `code !== undefined`, so a lobby whose code is '' must
+      // stay distinguishable from one with no code at all.
+      expect(parseJoinRequest(formatJoinRequest({ code: '' }))).toEqual({
+        ok: true,
+        value: { code: '' },
+      });
     });
   });
 });

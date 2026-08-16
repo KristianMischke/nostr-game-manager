@@ -23,6 +23,7 @@ import {
   offersFilter,
   parseDiscovery,
   parseHead,
+  parseLobby,
   parseState,
   type DiscoveryOffer,
   type NostrEvent,
@@ -1229,6 +1230,151 @@ describe('leaving a lobby', () => {
     creator.close();
     second.close();
     third.close();
+  });
+});
+
+describe('private lobbies', () => {
+  const CODE = 'open-sesame';
+
+  /** A gated lobby, plus a session for someone standing outside it. */
+  async function gated(): Promise<{
+    table: Table;
+    host: ReturnType<typeof createLobbySession>;
+    guest: ReturnType<typeof createLobbySession>;
+  }> {
+    const table = await seat(2);
+    const [host, guest] = table.players.map((signer) =>
+      createLobbySession({
+        transport: table.relay,
+        signer,
+        gm: table.gmSigner.pubkey,
+        clock: table.clock,
+      }),
+    );
+
+    const address = await host.create(ordersModule.id, CONFIG, {
+      visibility: 'private',
+      code: CODE,
+    });
+    await table.gm.drain();
+    await guest.watch(address);
+
+    return { table, host, guest };
+  }
+
+  it('marks the lobby private without putting the code in it', async () => {
+    const { table, host, guest } = await gated();
+
+    const lobby = host.getSnapshot().lobby;
+    expect(lobby?.visibility).toBe('private');
+
+    // NIP-GM §Behaviors: the code is checked by the GM and never appears in the
+    // lobby event. Asserted against the event itself, not the parsed lobby —
+    // the parser would drop a tag it does not know about, hiding the leak.
+    const stored = table.relay.stored([{ kinds: [KIND.LOBBY] }]);
+    expect(stored).toHaveLength(1);
+    expect(JSON.stringify(stored[0])).not.toContain(CODE);
+
+    host.close();
+    guest.close();
+  });
+
+  it('asks for a code rather than refusing outright, and says which is wrong', async () => {
+    const { table, host, guest } = await gated();
+
+    // Nothing on the wire tells a client the lobby is gated, so the first
+    // knock is always codeless. It has to come back as a prompt, not a wall.
+    await guest.join();
+    await table.gm.drain();
+    expect(guest.getSnapshot().error?.message).toBe('code_required');
+    expect(host.getSnapshot().lobby?.players).toHaveLength(1);
+
+    await guest.join({ code: 'not-it' });
+    await table.gm.drain();
+    expect(guest.getSnapshot().error?.message).toBe('bad_code');
+    expect(host.getSnapshot().lobby?.players).toHaveLength(1);
+
+    await guest.join({ code: CODE });
+    await table.gm.drain();
+    expect(host.getSnapshot().lobby?.players.map((p) => p.pubkey)).toEqual([
+      table.players[0].pubkey,
+      table.players[1].pubkey,
+    ]);
+    // The refusal has to stop being the session's news once the retry works,
+    // or every client renders `bad_code` at someone who is already seated.
+    expect(guest.getSnapshot().error).toBeNull();
+
+    host.close();
+    guest.close();
+  });
+
+  it('never lets the code reach the relay in the clear', async () => {
+    const { table, host, guest } = await gated();
+
+    await guest.join({ code: CODE });
+    await table.gm.drain();
+
+    // `log` rather than `stored`: ephemeral events are gone from storage but
+    // were still broadcast, and a code leaked in one is just as leaked. Both
+    // directions are covered — the create body that set the code and the join
+    // body that answered it.
+    expect(table.relay.log.length).toBeGreaterThan(0);
+    for (const event of table.relay.log) {
+      expect(JSON.stringify(event)).not.toContain(CODE);
+    }
+
+    host.close();
+    guest.close();
+  });
+
+  it('lets an ungated private lobby be joined by anyone holding the address', async () => {
+    const table = await seat(2);
+    const [host, guest] = table.players.map((signer) =>
+      createLobbySession({
+        transport: table.relay,
+        signer,
+        gm: table.gmSigner.pubkey,
+        clock: table.clock,
+      }),
+    );
+
+    // Private with no code is the link-only lobby: unlisted by clients, but the
+    // GM gates nothing, because there is nothing to gate on.
+    const address = await host.create(ordersModule.id, CONFIG, { visibility: 'private' });
+    await table.gm.drain();
+    await guest.watch(address);
+    await guest.join();
+    await table.gm.drain();
+
+    expect(guest.getSnapshot().error).toBeNull();
+    expect(host.getSnapshot().lobby?.players).toHaveLength(2);
+
+    host.close();
+    guest.close();
+  });
+
+  it('still opens a lobby for a client that sends the create body in plaintext', async () => {
+    const table = await seat(1);
+    const player = table.players[0];
+
+    // A GM is a public service and cannot upgrade its callers, so a body it
+    // cannot decrypt is read as plaintext rather than dropped. See
+    // `secret-body.ts`.
+    const request = await player.signEvent({
+      ...buildCreate(
+        { kind: KIND.GM_ANNOUNCEMENT, pubkey: table.gmSigner.pubkey, identifier: ordersModule.id },
+        table.gmSigner.pubkey,
+        JSON.stringify({ visibility: 'public', config: CONFIG }),
+      ),
+      pubkey: player.pubkey,
+      created_at: table.clock.now(),
+    });
+    await table.relay.publish(request);
+    await table.gm.drain();
+
+    const stored = table.relay.stored([{ kinds: [KIND.LOBBY] }]);
+    expect(stored).toHaveLength(1);
+    expect(parseLobby(stored[0])).toMatchObject({ ok: true, value: { status: 'open' } });
   });
 });
 

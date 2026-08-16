@@ -15,6 +15,7 @@ import {
   buildLobbyAction,
   formatAddress,
   formatCreateRequest,
+  formatJoinRequest,
   KIND,
   lobbyFilter,
   parseLobby,
@@ -88,7 +89,16 @@ export interface LobbySession extends ReadableStore<LobbySnapshot> {
   create(game: string, config?: unknown, options?: CreateOptions): Promise<AddressPointer>;
   /** Watch an existing lobby by address. */
   watch(address: AddressPointer): Promise<void>;
-  join(): Promise<void>;
+  /**
+   * Ask to be seated.
+   *
+   * `code` is required only by a lobby the GM gated with one, and there is no
+   * way to know that in advance: a gated lobby looks exactly like an ungated one
+   * on the wire — the code never appears in the lobby event. So the shape of
+   * this is call it, and if the GM answers `code_required` ask the player and
+   * call it again.
+   */
+  join(options?: { code?: string }): Promise<void>;
   ready(options?: { start?: boolean }): Promise<void>;
   leave(): Promise<void>;
   close(): void;
@@ -197,10 +207,19 @@ export function createLobbySession(options: LobbySessionOptions): LobbySession {
       return;
     }
 
-    if (body.value.status === 'accepted' && waiter && body.value.lobby) {
-      const [kind, pubkey, identifier] = body.value.lobby.split(':');
-      waiter.resolve({ kind: Number(kind), pubkey, identifier });
-      awaitingResponse.delete(parsed.value.target);
+    if (body.value.status === 'accepted') {
+      // Whatever the last rejection was about, it is over: this session's
+      // errors are all lobby errors (move rejections are filtered out above),
+      // and the GM just accepted a lobby action. Without this, a join refused
+      // for a missing code leaves `code_required` standing after the retry that
+      // worked, and every client showing the error has nothing to clear it.
+      if (store.getSnapshot().error) store.set({ ...store.getSnapshot(), error: null });
+
+      if (waiter && body.value.lobby) {
+        const [kind, pubkey, identifier] = body.value.lobby.split(':');
+        waiter.resolve({ kind: Number(kind), pubkey, identifier });
+        awaitingResponse.delete(parsed.value.target);
+      }
     }
   };
 
@@ -233,17 +252,19 @@ export function createLobbySession(options: LobbySessionOptions): LobbySession {
     await ensureResponseSub();
     const announcement: AddressPointer = { kind: KIND.GM_ANNOUNCEMENT, pubkey: gm, identifier: game };
 
+    // Encrypted to the GM, always — not only when there is a code to hide.
+    // NIP-GM makes the create body NIP-44 *because* it may carry one, and a
+    // client that encrypted only the gated case would announce which lobbies
+    // are gated by the shape of its own traffic.
+    const body = await signer.nip44Encrypt(
+      gm,
+      formatCreateRequest({ ...createOptions, config: config ?? {} }),
+    );
+
     // Registered *before* publishing, not in a `.then` afterwards. The GM may
     // answer the instant the event lands — synchronously, against an in-process
     // relay — and a waiter installed after the fact would miss it and hang.
-    const event = await sign(
-      buildCreate(
-        announcement,
-        gm,
-        formatCreateRequest({ ...createOptions, config: config ?? {} }),
-        mode,
-      ),
-    );
+    const event = await sign(buildCreate(announcement, gm, body, mode));
     const settled = new Promise<AddressPointer>((resolve, reject) => {
       awaitingResponse.set(event.id, { resolve, reject });
     });
@@ -263,8 +284,16 @@ export function createLobbySession(options: LobbySessionOptions): LobbySession {
     create,
     watch,
 
-    async join(): Promise<void> {
-      await publish(buildLobbyAction('join', requireAddress(), gm, '', { mode }));
+    async join(opts: { code?: string } = {}): Promise<void> {
+      // Empty content for an ungated join, so the ordinary case stays a bare
+      // message. A code is NIP-44'd to the GM: it is the one thing here that
+      // must not sit in plaintext on a public relay, where it would gate
+      // nothing against anyone who read it.
+      const body =
+        opts.code === undefined
+          ? ''
+          : await signer.nip44Encrypt(gm, formatJoinRequest({ code: opts.code }));
+      await publish(buildLobbyAction('join', requireAddress(), gm, body, { mode }));
     },
 
     async ready(opts: { start?: boolean } = {}): Promise<void> {

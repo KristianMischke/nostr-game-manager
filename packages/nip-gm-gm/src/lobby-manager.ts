@@ -19,6 +19,7 @@ import {
   canStart,
   createSeedCommitment,
   formatAddress,
+  parseJoinRequest,
   KIND,
   type AddressPointer,
   type Clock,
@@ -33,6 +34,7 @@ import {
   type SeedCommitment,
 } from 'nip-gm-core';
 import type { Publisher } from './publisher.js';
+import { readSecretBody, type Decrypt } from './secret-body.js';
 
 export interface LobbyDefaults {
   mode: PersistenceMode;
@@ -59,6 +61,17 @@ export interface ManagedLobby {
   commitment: SeedCommitment;
   openedAt: number;
   module: string;
+  /**
+   * The join code, when the creator set one. **GM-side only.**
+   *
+   * Deliberately here and not on `lobby`: everything in `lobby` is published,
+   * and NIP-GM §Behaviors is explicit that the code never appears in the lobby
+   * event. It arrives NIP-44'd inside the create body, is held in memory, and is
+   * compared against what each joiner sends — it is never written anywhere a
+   * relay can see. That also means it does not survive a restart, which is the
+   * same trade the rest of this map makes.
+   */
+  code?: string;
 }
 
 export interface LobbyManagerOptions {
@@ -72,6 +85,13 @@ export interface LobbyManagerOptions {
   gmPubkey: Hex;
   clock: Clock;
   defaults: LobbyDefaults;
+  /**
+   * Opens a NIP-44 body addressed to this GM — the join code's envelope.
+   *
+   * Injected rather than taken as a signer so this file keeps needing nothing
+   * but a publisher and a clock, and so a test can gate a lobby without keys.
+   */
+  decrypt: Decrypt;
   /** Called once a lobby's start conditions are met and the start event is published. */
   onStart(lobby: ManagedLobby, start: NostrEvent): Promise<void>;
 }
@@ -250,6 +270,11 @@ export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
         module: module.id,
         openedAt: clock.now(),
         commitment: createSeedCommitment(),
+        // Honoured whatever the visibility. A code on a public lobby is a
+        // listed room that still asks at the door — unusual, but the creator
+        // asked for it, and refusing would be the GM quietly handing back a
+        // lobby that behaves differently from the one requested.
+        code: create.code,
         lobby: {
           lobbyId: identifier,
           game: module.id,
@@ -297,6 +322,29 @@ export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
           if (players.length >= managed.lobby.config.maxPlayers) {
             await respond(event, { status: 'rejected', reason: 'lobby_full' }, mode);
             return;
+          }
+
+          if (managed.code !== undefined) {
+            const body = parseJoinRequest(
+              await readSecretBody(options.decrypt, event.pubkey, message.content),
+            );
+            // A body that will not parse is refused as a wrong code rather than
+            // ignored: the joiner is waiting on an answer either way, and there
+            // is no reading of an unparseable join that should seat someone.
+            if (!body.ok || body.value.code === undefined) {
+              // Two reasons, not one. A client cannot tell a gated lobby from an
+              // open one before it knocks — the code is not in the lobby event —
+              // so "you need a code" is the prompt to ask the player for one,
+              // while "that code is wrong" is the prompt to say they got it
+              // wrong. Collapsing them would make the first attempt at every
+              // private lobby look like a failure.
+              await respond(event, { status: 'rejected', reason: 'code_required' }, mode);
+              return;
+            }
+            if (body.value.code !== managed.code) {
+              await respond(event, { status: 'rejected', reason: 'bad_code' }, mode);
+              return;
+            }
           }
           // Appended, never inserted or sorted: join order becomes seat order.
           players.push({ pubkey: event.pubkey, state: 'joined' });

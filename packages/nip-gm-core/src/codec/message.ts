@@ -288,6 +288,43 @@ export function formatCreateRequest(request: CreateRequest): string {
   });
 }
 
+/**
+ * The decrypted body of a `join` message (NIP-GM §Game Messages — join).
+ *
+ * Only ever carries a join code, and only when the lobby is gated: the spec's
+ * own example is `{"code":"..."}` — or empty for a public lobby. It exists as a
+ * type so that "no body" and "a body with no code" are the same thing to every
+ * caller, which is what lets the GM check codes without every ungated join
+ * having to send an empty object.
+ */
+export interface JoinRequest {
+  code?: string;
+}
+
+/**
+ * Parse a join body. Empty content is a join with nothing to say.
+ *
+ * The emptiness case is the common one — every public-lobby join takes it — and
+ * it has to be distinguished from malformed content, since the GM turns a parse
+ * failure into a rejection. `''` is what `buildLobbyAction` defaults to.
+ */
+export function parseJoinRequest(content: string): ParseResult<JoinRequest> {
+  if (content.trim() === '') return ok({});
+
+  const parsed = parseJsonObject(content);
+  if (!parsed.ok) return parsed;
+
+  const raw = parsed.value;
+  if (raw.code === undefined) return ok({});
+  if (typeof raw.code !== 'string') return fail('bad_code');
+  return ok({ code: raw.code });
+}
+
+/** Serialize a join body. The inverse of {@link parseJoinRequest}. */
+export function formatJoinRequest(request: JoinRequest): string {
+  return request.code === undefined ? '' : JSON.stringify({ code: request.code });
+}
+
 export function parseResponseBody(content: string): ParseResult<ResponseBody> {
   const parsed = parseJsonObject(content);
   if (!parsed.ok) return parsed;

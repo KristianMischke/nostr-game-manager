@@ -43,6 +43,7 @@ import {
 } from './lobby-manager.js';
 import { mayCreate, type GMPolicy } from './policy.js';
 import { createPublisher } from './publisher.js';
+import { readSecretBody, type Decrypt } from './secret-body.js';
 import { createRunner, type GameRunner } from './runner.js';
 
 /**
@@ -118,12 +119,15 @@ export function createGM(options: GMOptions): GM {
     pubkey: () => pubkey as Hex,
   });
 
+  const decrypt: Decrypt = (peer, ciphertext) => signer.nip44Decrypt(peer, ciphertext);
+
   const buildLobbyManager = (gmPubkey: Hex): LobbyManager =>
     createLobbyManager({
       publish,
       gmPubkey,
       clock,
       defaults,
+      decrypt,
       async onStart(managed, start) {
         const module = modules.get(managed.module);
         if (!module) return;
@@ -222,7 +226,11 @@ export function createGM(options: GMOptions): GM {
           return;
         }
 
-        const create = parseCreateRequest(message.content);
+        // NIP-44'd to us, because it may carry a join code. `readSecretBody`
+        // also accepts a plaintext body — see the note in that file.
+        const create = parseCreateRequest(
+          await readSecretBody(decrypt, event.pubkey, message.content),
+        );
         if (!create.ok) {
           // Reported, not silently defaulted. The body carries the lobby's
           // start condition and visibility, so quietly falling back would hand
