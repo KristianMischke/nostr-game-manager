@@ -541,6 +541,9 @@ describe('timeouts', () => {
 
     table.clock.advance(61);
     await table.gm.drain();
+    // A timeout fires from the clock, not from a message, so it runs outside the
+    // daemon's queue and `drain()` does not cover the publishes it triggers.
+    await settle();
 
     expect(session.getSnapshot().seq).toBe(1);
 
@@ -604,11 +607,20 @@ describe('timeouts', () => {
     expect(statuses.at(-1)?.remaining).toBe(20);
 
     // Closing the round retires the old countdown and starts the next one.
+    //
+    // The next round is timed from the instant the previous one closed — the
+    // `now` the delta records — and not from whenever the publishes that closed
+    // it happened to finish. Those differ by the publish latency on a real
+    // clock and by the whole of this `advance` on a manual one, which is why the
+    // expectation is anchored to the deadline that fired rather than to
+    // `clock.now()`. A round whose length depended on how long the relay took
+    // would not be reproducible from the log.
+    const firstDeadline = openedAt + 60;
     table.clock.advance(30);
     await table.gm.drain();
     await settle();
     expect(session.getSnapshot().seq).toBe(1);
-    expect(session.getSnapshot().deadline).toBe(table.clock.now() + 60);
+    expect(session.getSnapshot().deadline).toBe(firstDeadline + 60);
 
     session.close();
   });
@@ -1459,6 +1471,65 @@ describe('same-second republication', () => {
     // pushed ahead of the wall clock — the deliberate cost of the guard.
     const lobby = table.relay.stored([{ kinds: [KIND.LOBBY] }])[0];
     expect(lobby.created_at).toBeGreaterThan(now);
+  });
+});
+
+describe('restarting the daemon', () => {
+  /**
+   * Restart a GM over the same relay, signer and clock.
+   *
+   * `stop()` rather than an abrupt drop: this test is about what the *new*
+   * process reads off the relay, and a graceful stop is the friendlier of the
+   * two starting points. If the replay happens here it happens after a crash too.
+   */
+  async function restart(table: Table, inboxSince?: number): Promise<Table> {
+    await table.gm.stop();
+    const gm = createGM({
+      modules: [ordersModule],
+      signer: table.gmSigner,
+      transport: table.relay,
+      clock: table.clock,
+      policy: { allowCreate: 'anyone' },
+      lobbyDefaults: { turnTimeout: 0, snapshotInterval: 0 },
+      ...(inboxSince === undefined ? {} : { inboxSince }),
+    });
+    await gm.start();
+    await gm.drain();
+    return { ...table, gm };
+  }
+
+  it('does not re-answer the create requests the relay still holds', async () => {
+    const table = await seat(2);
+    await startGame(table);
+
+    const before = table.relay.stored([{ kinds: [KIND.LOBBY] }]).length;
+    expect(before).toBe(1);
+
+    // A second, so the historical create is strictly older than the restart.
+    // `since` is inclusive, so a GM restarting inside the same second as a
+    // create still re-answers it — a one-second window rather than all history.
+    table.clock.advance(1);
+    const restarted = await restart(table);
+
+    // The create that opened the lobby above is still sitting on the relay: it
+    // is kind 2600, a regular kind, so subscribing replays it. Acting on it
+    // would mint a second lobby with a second identifier — every restart,
+    // forever — and the GM would look busy while answering last week's post.
+    expect(restarted.relay.stored([{ kinds: [KIND.LOBBY] }]).length).toBe(before);
+    expect(restarted.gm.games.size).toBe(0);
+  });
+
+  it('takes the whole history when asked for it explicitly', async () => {
+    const table = await seat(2);
+    await startGame(table);
+    table.clock.advance(1);
+
+    // The escape hatch, and the proof that the default is doing the work: the
+    // filter has no floor, the historical create comes back, and the daemon
+    // opens a lobby for it. Nobody wants this — it is here so that the
+    // difference between the two paths is visible rather than asserted.
+    const restarted = await restart(table, 0);
+    expect(restarted.relay.stored([{ kinds: [KIND.LOBBY] }]).length).toBeGreaterThan(1);
   });
 });
 

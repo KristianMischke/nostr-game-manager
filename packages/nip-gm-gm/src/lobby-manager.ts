@@ -94,6 +94,35 @@ export interface LobbyManagerOptions {
   decrypt: Decrypt;
   /** Called once a lobby's start conditions are met and the start event is published. */
   onStart(lobby: ManagedLobby, start: NostrEvent): Promise<void>;
+  /**
+   * A number that never repeats, for the lobby identifier.
+   *
+   * Defaults to a per-manager counter, which is what a GM with no memory can
+   * offer. It is not enough on its own: the identifier is an addressable event's
+   * `d` tag, so a value reused after a restart does not collide harmlessly — the
+   * new lobby *replaces* the old one on the relay and a live game's lobby event
+   * disappears. A durable GM passes something monotonic across restarts.
+   */
+  nextSequence?(): Promise<number>;
+  /**
+   * Called after every change to a lobby, before it is republished.
+   *
+   * The seat for durability: it carries the seed, salt and join code, none of
+   * which are on any relay, and it runs *before* the publish so that nothing is
+   * announced that could not be honoured after a crash.
+   */
+  onChange?(lobby: ManagedLobby, cause?: Hex): Promise<void>;
+  /**
+   * Called with the signed start event, before it is sent.
+   *
+   * Where the game becomes real. Everything about it — the first snapshot, the
+   * start event itself, the lobby's move to `active` — has to be one durable act
+   * committed here, because the moment after this returns the event is on a
+   * relay and cannot be taken back. See the second rule in `store.ts`.
+   */
+  onBeginGame?(lobby: ManagedLobby, start: NostrEvent): Promise<void>;
+  /** Called once a prepared event has reached the relay. */
+  onSent?(eventId: Hex): Promise<void>;
 }
 
 export interface LobbyManager {
@@ -116,13 +145,29 @@ export interface LobbyManager {
   ): Promise<void>;
   get(identifier: string): ManagedLobby | undefined;
   readonly all: readonly ManagedLobby[];
+  /**
+   * Reinstate lobbies from a previous process.
+   *
+   * Nothing is republished: an addressable event is still on the relay saying
+   * exactly what these say, and a rewrite that changes nothing is noise. What
+   * this does do is re-check the start conditions, because a lobby whose last
+   * player readied up moments before the crash is otherwise waiting on a message
+   * that will never come — everyone in it already said everything they had to.
+   */
+  restore(
+    lobbies: readonly ManagedLobby[],
+    moduleFor: (id: string) => GameModule<unknown, unknown, unknown, unknown> | undefined,
+  ): Promise<void>;
 }
-
-let counter = 0;
 
 export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
   const { publish, gmPubkey, clock } = options;
   const lobbies = new Map<string, ManagedLobby>();
+
+  // Per-manager rather than per-module, so that two GMs in one process (which
+  // only tests do) cannot hand each other the same identifier.
+  let counter = 0;
+  const nextSequence = options.nextSequence ?? (() => Promise.resolve(counter++));
 
   const republish = async (managed: ManagedLobby): Promise<void> => {
     await publish(buildLobby(managed.lobby));
@@ -159,9 +204,13 @@ export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
       return;
     }
 
+    // In memory only, and deliberately not persisted: a crash here must leave the
+    // lobby exactly as open as it was, so that the restored GM re-runs this and
+    // signs a *fresh* start event — against the same durable seed, so the
+    // commitment it publishes is the one it can still reveal.
     managed.lobby = { ...managed.lobby, status: 'starting' };
 
-    const start = await publish(
+    const start = await publish.prepare(
       buildStart(
         {
           lobby: managed.address,
@@ -189,6 +238,13 @@ export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
     );
 
     managed.lobby = { ...managed.lobby, status: 'active', gameId: start.id };
+
+    // Durable, then sent. The other order publishes a game whose seed a restart
+    // might not be able to find, and a game whose seed is gone cannot be ended.
+    await options.onBeginGame?.(managed, start);
+    await publish.send(start);
+    await options.onSent?.(start.id);
+
     await republish(managed);
     await options.onStart(managed, start);
   };
@@ -247,7 +303,7 @@ export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
     async create(module, requester, create, request): Promise<ManagedLobby> {
       const { config } = create;
       const start = create.start ?? { kind: 'ready' };
-      const identifier = `${module.id}-${clock.now()}-${counter++}`;
+      const identifier = `${module.id}-${clock.now()}-${await nextSequence()}`;
       const address: AddressPointer = {
         kind: KIND.LOBBY,
         pubkey: gmPubkey,
@@ -295,6 +351,9 @@ export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
       };
 
       lobbies.set(identifier, managed);
+      // Before the lobby event exists, let alone the start event that publishes
+      // this commitment: the seed has to be findable by whoever has to reveal it.
+      await options.onChange?.(managed, request.id);
       await republish(managed);
       await respond(
         request,
@@ -369,6 +428,8 @@ export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
 
       managed.lobby = { ...managed.lobby, players };
       if (message.action === 'leave') settleDeparture(managed);
+      if (managed.lobby.status === 'closed') lobbies.delete(managed.lobby.lobbyId);
+      await options.onChange?.(managed, event.id);
       await republish(managed);
       await respond(event, { status: 'accepted', lobby: formatAddress(managed.address) }, mode);
 
@@ -385,6 +446,23 @@ export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
 
     get all(): readonly ManagedLobby[] {
       return [...lobbies.values()];
+    },
+
+    async restore(restored, moduleFor): Promise<void> {
+      for (const managed of restored) lobbies.set(managed.lobby.lobbyId, managed);
+
+      for (const managed of restored) {
+        const module = moduleFor(managed.module);
+        // A lobby for a module this GM no longer hosts is left in the map rather
+        // than dropped: it can never start, but its seed is still the one behind
+        // a commitment somebody may hold, and silently forgetting it is how a
+        // config change becomes an unauditable game.
+        if (!module) continue;
+        // `false` for leader intent: a leader's "start now" is an instruction,
+        // not a standing condition, and re-inferring one from a restored roster
+        // would start a game its leader never asked twice for.
+        await maybeStart(managed, module, false);
+      }
     },
   };
 }

@@ -28,6 +28,7 @@
  * for it at all.
  */
 export * from './policy.js';
+export * from './store.js';
 export * from './lobby-manager.js';
 export * from './runner.js';
 export * from './gm.js';

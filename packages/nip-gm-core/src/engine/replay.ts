@@ -25,6 +25,29 @@ import type {
 import type { Hex } from '../types.js';
 import { orderRound } from './ordering.js';
 
+/**
+ * A game's position, as the GM that played it can restore it.
+ *
+ * Four fields because the engine has four pieces of private state and
+ * `serialize()` covers one. `awaiting` in particular is never in the serialized
+ * state: it comes from `awaitingAtStart` at construction and from
+ * `ApplyResult.awaiting` thereafter, so a snapshot without it resumes a game
+ * that does not know whose turn it is.
+ *
+ * `state` MUST be `module.serialize()` output. Not the head (kind 32602), which
+ * is `redact()` output for public consumption — see the note in `codec/head.ts`.
+ */
+export interface EngineSnapshot {
+  /** `module.serialize()` output, to be read back by `module.deserialize`. */
+  state: unknown;
+  /** Sequence number of the last applied round. */
+  seq: number;
+  /** Who the next round is waiting on. */
+  awaiting: Hex[];
+  /** Set only for a game that had already ended when the snapshot was taken. */
+  result?: GameResult;
+}
+
 export interface EngineOptions<Config> {
   /** Event id of the start event. Mixed into every RNG derivation. */
   gameId: Hex;
@@ -33,6 +56,21 @@ export interface EngineOptions<Config> {
   seats: Hex[];
   /** The GM's committed seed (already combined with player contributions, if any). */
   seed: Uint8Array;
+  /**
+   * Resume a game in progress instead of dealing a new one.
+   *
+   * Present, `module.init` is not called and the position comes from the
+   * snapshot; absent, this is an ordinary new game and nothing changes.
+   *
+   * What makes this safe is that the RNG is *addressed*, not sequential:
+   * `rng.at(seq, label)` is a pure function of the seed, the game id and the
+   * address the module asks for, so there is no draw counter to restore and no
+   * way for a resumed game to fall out of step with the log an auditor replays.
+   * An engine with an implicit RNG sequence could not offer this at all.
+   *
+   * The seed is still required, because the RNG is built from it either way.
+   */
+  restore?: EngineSnapshot;
 }
 
 /** One round's outcome, including the ordering the GM must publish. */
@@ -62,6 +100,14 @@ export class GameEngine<Config, State, Move, Patch> {
     this.seats = [...options.seats];
     this.rng = createRng(options.seed, options.gameId);
 
+    if (options.restore) {
+      this.current = module.deserialize(options.restore.state);
+      this.currentSeq = options.restore.seq;
+      this.currentAwaiting = [...options.restore.awaiting];
+      this.ended = options.restore.result;
+      return;
+    }
+
     this.current = module.init({
       gameId: options.gameId,
       config: options.config,
@@ -72,6 +118,23 @@ export class GameEngine<Config, State, Move, Patch> {
     // Round 1 has no preceding delta to say who acts, so the module declares it.
     // Every later round takes `awaiting` from the round before.
     this.currentAwaiting = module.awaitingAtStart?.(this.seats) ?? [...this.seats];
+  }
+
+  /**
+   * The engine's whole position, for a GM to write down and resume from.
+   *
+   * `serialize()` returns only the module's state; this returns everything the
+   * constructor's `restore` needs. Use it rather than assembling the four fields
+   * at the call site, so a fifth can be added here without every GM growing a
+   * silent gap in what it persists.
+   */
+  snapshot(): EngineSnapshot {
+    return {
+      state: this.module.serialize(this.current),
+      seq: this.currentSeq,
+      awaiting: [...this.currentAwaiting],
+      ...(this.ended ? { result: this.ended } : {}),
+    };
   }
 
   get state(): State {

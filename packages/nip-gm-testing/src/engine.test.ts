@@ -166,6 +166,129 @@ describe('replay', () => {
   });
 });
 
+describe('GameEngine restore', () => {
+  /**
+   * Through JSON, always.
+   *
+   * A GM's snapshot reaches its successor through a database, so anything that
+   * survives only as a live object reference — a Map, a class instance, a
+   * reference shared with the engine's own state — is a resume that works in a
+   * test and fails in production. Orders' `serialize` returns the state object
+   * itself, so without this the test would be checking reference equality and
+   * proving nothing.
+   */
+  function throughStorage<T>(snapshot: T): T {
+    return JSON.parse(JSON.stringify(snapshot)) as T;
+  }
+
+  function play(engine: GameEngine<OrdersConfig, unknown, OrdersMove, unknown>, rounds: number) {
+    for (let i = 0; i < rounds && !engine.isOver; i++) {
+      engine.applyRound(
+        [
+          move(alice.pubkey, { type: 'advance', distance: 2 }),
+          move(bob.pubkey, { type: 'advance', distance: 1 }),
+          move(carol.pubkey, { type: 'hold' }),
+        ],
+        null,
+        1_700_000_000 + i * 60,
+      );
+    }
+  }
+
+  const fresh = () =>
+    new GameEngine(ordersModule, { gameId: GAME, config: CONFIG, seats, seed: SEED });
+
+  it('resumes to a position indistinguishable from never having stopped', () => {
+    counter = 0;
+    const straight = fresh();
+    play(straight, 5);
+
+    // The same five rounds, but the engine is thrown away and rebuilt halfway.
+    counter = 0;
+    const first = fresh();
+    play(first, 2);
+    const resumed = new GameEngine(ordersModule, {
+      gameId: GAME,
+      config: CONFIG,
+      seats,
+      seed: SEED,
+      restore: throughStorage(first.snapshot()),
+    });
+    play(resumed, 3);
+
+    expect(canonicalJson(resumed.serialize())).toBe(canonicalJson(straight.serialize()));
+    expect(resumed.seq).toBe(straight.seq);
+    expect(resumed.awaiting).toEqual(straight.awaiting);
+  });
+
+  it('carries the turn order, which the serialized state does not', () => {
+    counter = 0;
+    const engine = fresh();
+    play(engine, 2);
+
+    const snapshot = throughStorage(engine.snapshot());
+    // `awaiting` is not in `serialize()` output — it comes from `awaitingAtStart`
+    // and then from each round's `ApplyResult`. A snapshot that carried only the
+    // state would resume a game that did not know whose turn it was, and the
+    // engine would silently fall back to `awaitingAtStart` for a mid-game round.
+    expect(snapshot.awaiting).toEqual(engine.awaiting);
+
+    const resumed = new GameEngine(ordersModule, {
+      gameId: GAME, config: CONFIG, seats, seed: SEED, restore: snapshot,
+    });
+    expect(resumed.awaiting).toEqual(engine.awaiting);
+    expect(resumed.seq).toBe(2);
+  });
+
+  it('diverges when restored from a redacted head instead of a snapshot', () => {
+    counter = 0;
+    const engine = fresh();
+    play(engine, 2);
+
+    // Orders schedules storms several rounds ahead and `redact` strips the ones
+    // that have not landed — that is its whole hidden-information mechanic. The
+    // head (kind 32602) publishes exactly that redaction, so a GM that resumed
+    // from its own head would forget every storm still in flight and play a
+    // different game from the one it committed to. This is the regression test
+    // for the note in `codec/head.ts`.
+    const head = ordersModule.redact(engine.state, undefined);
+    expect(canonicalJson(head)).not.toBe(canonicalJson(engine.serialize()));
+
+    const fromHead = new GameEngine(ordersModule, {
+      gameId: GAME, config: CONFIG, seats, seed: SEED,
+      restore: { state: throughStorage(head), seq: engine.seq, awaiting: engine.awaiting },
+    });
+    const fromSnapshot = new GameEngine(ordersModule, {
+      gameId: GAME, config: CONFIG, seats, seed: SEED,
+      restore: throughStorage(engine.snapshot()),
+    });
+
+    counter = 100;
+    play(fromHead, 3);
+    counter = 100;
+    play(fromSnapshot, 3);
+
+    expect(canonicalJson(fromHead.serialize())).not.toBe(
+      canonicalJson(fromSnapshot.serialize()),
+    );
+  });
+
+  it('reports a game that had already ended when it was written down', () => {
+    counter = 0;
+    const engine = fresh();
+    play(engine, 20);
+    expect(engine.isOver).toBe(true);
+
+    const resumed = new GameEngine(ordersModule, {
+      gameId: GAME, config: CONFIG, seats, seed: SEED,
+      restore: throughStorage(engine.snapshot()),
+    });
+    expect(resumed.isOver).toBe(true);
+    expect(resumed.result).toEqual(engine.result);
+    expect(() => resumed.applyRound([], null, 1)).toThrow(/already ended/);
+  });
+});
+
 describe('checkDeterminism', () => {
   it('passes a well-behaved module', () => {
     const report = checkDeterminism(ordersModule, sampleLog(), { checkOrderIndependence: true });

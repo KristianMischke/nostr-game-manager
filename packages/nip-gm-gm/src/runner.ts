@@ -22,11 +22,19 @@
  *   the audit's revision check vacuous, which is the difference between "the GM
  *   proved it applied the highest revision" and "the GM said so".
  *
- * What is deliberately *not* here: crash recovery. A restarting GM must replay
- * its own log rather than reload the head, because the head is redacted for
- * public consumption and a module's hidden state (Orders' scheduled storms) is
- * not in it. That is a separate milestone, and doing it wrong quietly would be
- * worse than not doing it.
+ * ## Surviving a restart
+ *
+ * A runner can be rebuilt mid-game from a snapshot its predecessor wrote down
+ * (`RunnerOptions.resume`), and everything above is why the snapshot is the GM's
+ * own `serialize()` output rather than the head: the head is `redact()`'d for
+ * public consumption, so a module's hidden state — Orders' scheduled storms — is
+ * not in it, and neither is `awaiting`. A GM restored from its own head would
+ * quietly play a different game from the one it committed to.
+ *
+ * The open round is restored the same way, by feeding the move events back
+ * through `handleMove`. That is not thrift: the admission path is where the
+ * evidence is built, and a second path that reconstructed `accepted` directly
+ * would be a second chance to build it differently.
  */
 import {
   allFinal,
@@ -46,6 +54,7 @@ import {
   verifyEvent,
   type AppliedMove,
   type Clock,
+  type EngineSnapshot,
   type GameModule,
   type GameResult,
   type Hex,
@@ -60,6 +69,7 @@ import {
 } from 'nip-gm-core';
 import { bytesToHex } from '@noble/hashes/utils';
 import type { Publisher } from './publisher.js';
+import type { RoundCommit, StoredRevision, StoredRound } from './store.js';
 
 /** One accepted revision, with everything the closing delta will have to publish. */
 interface Accepted<Move> {
@@ -116,6 +126,50 @@ export interface RunnerOptions<Config, State, Move, Patch> {
    */
   statusInterval?: number;
   onEnd?(gameId: Hex, result: GameResult | undefined): void;
+  /**
+   * Rebuild a game in progress instead of dealing a new one.
+   *
+   * Present, call {@link GameRunner.resume} rather than {@link GameRunner.open}.
+   */
+  resume?: RunnerResume;
+  /**
+   * Where the runner writes itself down. Absent, nothing is durable.
+   *
+   * Every method is called at a point where a crash immediately afterwards is
+   * survivable and a crash immediately before it loses nothing that was
+   * published — see the second rule in `store.ts`.
+   */
+  persist?: RunnerPersistence;
+  /**
+   * Seconds of slack a resumed round's deadline gets, at minimum.
+   *
+   * A round whose deadline passed while the process was down would otherwise
+   * time out the instant the new one boots — every open game on the daemon
+   * resolving at once, from a deploy. The clamp is not auditable state: the
+   * delta records the `now` at close either way, and a timeout is a signed
+   * system input whenever it happens.
+   */
+  resumeGrace?: number;
+}
+
+/** A game in progress, as its predecessor wrote it down. */
+export interface RunnerResume {
+  /** Absent for a game that had not played a round yet; see `StoredGame.snapshot`. */
+  snapshot?: EngineSnapshot;
+  /** The round that was open, if the process died inside one. */
+  round?: {
+    record: StoredRound;
+    /** Raw signed move events already admitted, in arrival order. */
+    accepted: NostrEvent[];
+  };
+}
+
+/** The runner's durable safe points. See `store.ts`. */
+export interface RunnerPersistence {
+  roundOpened(round: StoredRound): Promise<void>;
+  revisionAccepted(revision: StoredRevision): Promise<void>;
+  roundCommitted(commit: RoundCommit): Promise<void>;
+  sent(eventId: Hex): Promise<void>;
 }
 
 /**
@@ -125,12 +179,29 @@ export interface RunnerOptions<Config, State, Move, Patch> {
  */
 export const DEFAULT_STATUS_INTERVAL = 10;
 
+/**
+ * Fifteen seconds of slack for a round resumed after the deadline passed.
+ *
+ * Long enough to cover an ordinary restart — drain, boot, relay handshake — and
+ * short enough that it is not a way to play on after time. See
+ * {@link RunnerOptions.resumeGrace}.
+ */
+export const DEFAULT_RESUME_GRACE = 15;
+
 export interface GameRunner {
   readonly gameId: Hex;
   readonly seq: number;
   readonly isOver: boolean;
   /** Publish the seq-0 head and open round 1. */
   open(): Promise<void>;
+  /**
+   * Reinstate a game in progress. Mutually exclusive with {@link open}.
+   *
+   * Requires `RunnerOptions.resume`; throws without it rather than quietly
+   * opening a fresh round on an old game, which would republish `seq` 1 over a
+   * game already at 40 and break the chain for every client following it.
+   */
+  resume(): Promise<void>;
   /** Feed a kind-2600 move message. Ignores anything not addressed to this game. */
   handleMove(event: NostrEvent): Promise<void>;
   /** Close the open round early, as if the timeout had fired. */
@@ -151,12 +222,25 @@ export function createRunner<Config, State, Move, Patch>(
     config: options.config,
     seats,
     seed: options.commitment.seed,
+    restore: options.resume?.snapshot,
   });
+
+  const persist = options.persist;
 
   let round: OpenRound<Move> | null = null;
   let stopped = false;
+  /**
+   * True while a resumed round's moves are being fed back in.
+   *
+   * Suppresses two things that are correct the first time and wrong the second:
+   * a `status` per admitted revision, which would be a burst of ephemeral events
+   * announcing nothing new, and rejections, which would tell a player their move
+   * from fifteen minutes ago was refused when in fact it was applied.
+   */
+  let replaying = false;
 
   const reject = async (target: NostrEvent, reason: string): Promise<void> => {
+    if (replaying) return;
     await publish(
       buildResponse(target.id, target.pubkey, { status: 'rejected', reason }, { gameId, mode }),
     );
@@ -179,7 +263,7 @@ export function createRunner<Config, State, Move, Patch>(
     round ? [...round.accepted.values()].map((a) => a.candidate) : [];
 
   const publishStatus = async (): Promise<void> => {
-    if (!round || stopped) return;
+    if (!round || stopped || replaying) return;
     const winners = selectRevisions(candidates());
     const received: Record<Hex, ReceivedRevision> = {};
     for (const [player, winner] of winners) {
@@ -219,22 +303,42 @@ export function createRunner<Config, State, Move, Patch>(
     });
   };
 
-  const openRound = async (seq: number, prev: Hex, awaiting: Hex[]): Promise<void> => {
-    const timed = lobby.turnTimeout > 0;
+  /** A round's durable form, built once so memory and storage cannot disagree. */
+  const roundRecord = (seq: number, prev: Hex, awaiting: Hex[], at: number): StoredRound => ({
+    gameId,
+    seq,
+    prev,
+    awaiting,
+    openedAt: at,
+    // Absolute, not a duration. A duration is only meaningful next to the clock
+    // reading that produced it, and the whole point here is that the process
+    // holding that reading may not be the one that acts on it.
+    deadline: lobby.turnTimeout > 0 ? at + lobby.turnTimeout : null,
+  });
+
+  /**
+   * Open a round from its record.
+   *
+   * `store` is false when the record is already durable — `commitRound` writes
+   * the next round in the same transaction as the delta that opens it, because
+   * its `prev` is that delta's id and a crash in between must not lose it.
+   */
+  const openRound = async (record: StoredRound, store: boolean): Promise<void> => {
     const opened: OpenRound<Move> = {
-      seq,
-      prev,
-      awaiting,
+      seq: record.seq,
+      prev: record.prev,
+      awaiting: [...record.awaiting],
       accepted: new Map(),
       timer: null,
       heartbeat: null,
-      deadline: timed ? clock.now() + lobby.turnTimeout : null,
+      deadline: record.deadline,
       closing: false,
     };
     round = opened;
+    if (store) await persist?.roundOpened(record);
 
-    if (timed) {
-      opened.timer = clock.setTimeout(lobby.turnTimeout, () => {
+    if (opened.deadline !== null) {
+      opened.timer = clock.setTimeout(Math.max(0, opened.deadline - clock.now()), () => {
         opened.timer = null;
         // A timeout is not a decision made offstage: it becomes a signed system
         // input on the closing delta, so replay reproduces it exactly.
@@ -278,7 +382,11 @@ export function createRunner<Config, State, Move, Patch>(
 
     const superseded = supersededRevisions(all, winners).map((c) => cite(c.id));
 
-    const delta = await publish(
+    // Everything this round will ever publish is signed first and sent second.
+    // Between the two sits one durable act, so that a crash can only ever land
+    // on "nothing happened" or "it happened, finish sending it" — never on "the
+    // relay has a delta this GM has no memory of having produced".
+    const delta = await publish.prepare(
       buildDelta(
         {
           gameId,
@@ -296,27 +404,65 @@ export function createRunner<Config, State, Move, Patch>(
       ),
     );
 
+    const privates: NostrEvent[] = [];
     for (const [recipient, value] of outcome.privateState ?? []) {
       const content = await signer.nip44Encrypt(recipient, JSON.stringify(value));
-      await publish(buildPrivate({ gameId, seq: outcome.seq, recipient, content }, { mode }));
+      // Prepared, not sent, for a reason particular to these: NIP-44 draws a
+      // fresh nonce per encryption, so re-encrypting the same private state
+      // after a crash produces different ciphertext and a different event id.
+      // A rebuilt one would be a second private state at the same seq rather
+      // than the same one again.
+      privates.push(
+        await publish.prepare(buildPrivate({ gameId, seq: outcome.seq, recipient, content }, { mode })),
+      );
+    }
+
+    const end = engine.isOver
+      ? await publish.prepare(
+          buildEnd({
+            gameId,
+            players: seats,
+            content: {
+              result: engine.result ?? { winners: [] },
+              // The reveal that makes every derivation in the game recomputable.
+              seed: bytesToHex(options.commitment.seed),
+              salt: bytesToHex(options.commitment.salt),
+            },
+          }),
+        )
+      : undefined;
+
+    const next = engine.isOver
+      ? undefined
+      : roundRecord(outcome.seq + 1, delta.id, outcome.awaiting, now);
+
+    await persist?.roundCommitted({
+      gameId,
+      snapshot: engine.snapshot(),
+      ...(engine.result ? { result: engine.result } : {}),
+      ...(engine.isOver ? { endedAt: now } : {}),
+      outgoing: [
+        { event: delta, purpose: 'delta', gameId, seq: outcome.seq },
+        ...privates.map((event) => ({ event, purpose: 'private' as const, gameId, seq: outcome.seq })),
+        ...(end ? [{ event: end, purpose: 'end' as const, gameId, seq: outcome.seq }] : []),
+      ],
+      closed: current.seq,
+      ...(next ? { next } : {}),
+    });
+
+    await publish.send(delta);
+    await persist?.sent(delta.id);
+    for (const event of privates) {
+      await publish.send(event);
+      await persist?.sent(event.id);
     }
 
     round = null;
 
-    if (engine.isOver) {
+    if (end) {
       await publishHead();
-      await publish(
-        buildEnd({
-          gameId,
-          players: seats,
-          content: {
-            result: engine.result ?? { winners: [] },
-            // The reveal that makes every derivation in the game recomputable.
-            seed: bytesToHex(options.commitment.seed),
-            salt: bytesToHex(options.commitment.salt),
-          },
-        }),
-      );
+      await publish.send(end);
+      await persist?.sent(end.id);
       options.onEnd?.(gameId, engine.result);
       return;
     }
@@ -324,7 +470,7 @@ export function createRunner<Config, State, Move, Patch>(
     if (lobby.snapshotInterval > 0 && outcome.seq % lobby.snapshotInterval === 0) {
       await publishHead();
     }
-    await openRound(outcome.seq + 1, delta.id, outcome.awaiting);
+    await openRound(next as StoredRound, false);
   }
 
   return {
@@ -340,7 +486,55 @@ export function createRunner<Config, State, Move, Patch>(
       // The seq-0 head is what lets a client bootstrap at all: it cannot replay
       // the module (no seed until the end), so it needs a state to fold onto.
       await publishHead();
-      await openRound(1, gameId, engine.awaiting);
+      await openRound(roundRecord(1, gameId, engine.awaiting, clock.now()), true);
+    },
+
+    async resume(): Promise<void> {
+      const from = options.resume;
+      if (!from) throw new Error(`cannot resume ${gameId}: no snapshot was given`);
+
+      // Republished at the current seq, not seq 0. This is for whoever arrives
+      // next — a reloading player, a spectator — and not for the clients already
+      // in the game: a session that has bootstrapped ignores every later head,
+      // and it does not need one, because the round below reopens at the same
+      // `prev` those clients are already holding.
+      await publishHead();
+
+      if (!from.round) {
+        // No open round is only ever legitimate at seq 0 — a game announced but
+        // never opened, because the process died between publishing the start
+        // event and opening round 1. Every later round is written down in the
+        // same transaction as the delta that opens it, so a gap here is a store
+        // that has lost something rather than a game between rounds.
+        if (engine.seq !== 0) {
+          throw new Error(`cannot resume ${gameId}: no open round recorded at seq ${engine.seq}`);
+        }
+        await openRound(roundRecord(1, gameId, engine.awaiting, clock.now()), true);
+        return;
+      }
+
+      const stored = from.round.record;
+      const grace = options.resumeGrace ?? DEFAULT_RESUME_GRACE;
+      const deadline =
+        stored.deadline === null ? null : Math.max(stored.deadline, clock.now() + grace);
+
+      // The record is reopened before the moves are replayed, because
+      // `checkEnvelope` compares each move against the round it belongs to —
+      // the same comparison, against the same `seq` and `prev`, that admitted it
+      // the first time.
+      await openRound({ ...stored, deadline }, false);
+
+      replaying = true;
+      try {
+        for (const event of from.round.accepted) await this.handleMove(event);
+      } finally {
+        replaying = false;
+      }
+
+      // One status for the whole replay rather than one per move: what a client
+      // needs is where the round stands now, and the deadline it should be
+      // counting down to.
+      await publishStatus();
     },
 
     async handleMove(event: NostrEvent): Promise<void> {
@@ -414,6 +608,21 @@ export function createRunner<Config, State, Move, Patch>(
       if (!legal.ok) {
         await reject(event, legal.reason);
         return;
+      }
+
+      // Durable before it is acknowledged. A revision the GM has acted on but
+      // not written down is one a restart would silently un-accept, and the
+      // player — who saw a `status` citing it — would have no reason to resend.
+      if (!replaying) {
+        await persist?.revisionAccepted({
+          gameId,
+          seq: current.seq,
+          event,
+          player,
+          rev: envelope.value.rev,
+          ...(key ? { key } : {}),
+          cause: event.id,
+        });
       }
 
       current.accepted.set(event.id, {

@@ -4,7 +4,15 @@
  * NIP-GM §Head snapshot. One replaceable event per game holding the latest full
  * public state, refreshed every `snapshot_interval` deltas and at game end.
  * Late joiners and spectators fetch the head plus subsequent deltas rather than
- * the whole log, and a restarting GM recovers from it.
+ * the whole log.
+ *
+ * **A restarting GM does not recover from this.** The head carries what
+ * `redact()` produced, and `deserialize` is the inverse of `serialize` only —
+ * feeding one to the other happens to work for a module whose `State` is a plain
+ * object and quietly builds a different game for one whose `State` is a class or
+ * whose hidden state a viewer never sees. It also omits `awaiting`, so a GM
+ * restored from it would not know whose turn it was. A GM resumes from its own
+ * `serialize()` snapshot; see `EngineOptions.restore` in `engine/replay.ts`.
  *
  * History is not lost: the start event and delta log remain authoritative, and
  * the head is only a cache.
