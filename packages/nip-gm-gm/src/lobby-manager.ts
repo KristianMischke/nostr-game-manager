@@ -72,6 +72,18 @@ export interface ManagedLobby {
    * same trade the rest of this map makes.
    */
   code?: string;
+  /**
+   * Players this lobby will not re-seat. **GM-side only**, like the code.
+   *
+   * Kicking that only spliced the roster would be theatre: the lobby event is
+   * public, `join` is idempotent and open to anyone, and a client that has been
+   * removed can simply ask again — most will, automatically, because a roster
+   * they are missing from looks to them like a join that failed. So removal has
+   * to be remembered, and remembered somewhere the relay cannot see, since a
+   * published list of people who were thrown out is a punishment nobody asked
+   * the protocol to hand out.
+   */
+  denied?: Hex[];
 }
 
 export interface LobbyManagerOptions {
@@ -145,6 +157,29 @@ export interface LobbyManager {
   ): Promise<void>;
   get(identifier: string): ManagedLobby | undefined;
   readonly all: readonly ManagedLobby[];
+  /**
+   * Remove a player, and by default refuse to seat them again.
+   *
+   * An operator action, not a protocol message: there is no `kick` a player can
+   * send, and no NIP-GM event for one. It exists because a GM running inside
+   * somebody's client has a person sitting behind it who can see who walked in,
+   * which a daemon does not. Nothing is sent to the person removed — the
+   * republished lobby is the notification, the same way every other membership
+   * change is.
+   *
+   * `ban: false` removes without remembering, for the case where somebody
+   * should be able to come back.
+   */
+  kick(identifier: string, pubkey: Hex, options?: { ban?: boolean }): Promise<void>;
+  /**
+   * Change, set or clear the join code.
+   *
+   * No republish: the code has never been part of the lobby event, so nothing
+   * a relay holds changes. It gates the *next* join and leaves everyone already
+   * seated exactly where they are — rotating a code is how a host stops the
+   * link they posted somewhere from working, not how they clear the room.
+   */
+  setCode(identifier: string, code: string | undefined): Promise<void>;
   /**
    * Reinstate lobbies from a previous process.
    *
@@ -373,6 +408,13 @@ export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
 
       switch (message.action) {
         case 'join': {
+          // Before the idempotency check, deliberately: someone removed from
+          // the roster is no longer in `players`, so every re-join reads as a
+          // first one.
+          if (managed.denied?.includes(event.pubkey)) {
+            await respond(event, { status: 'rejected', reason: 'kicked' }, mode);
+            return;
+          }
           if (index !== -1) break; // Idempotent: a re-join is not an error.
           if (managed.lobby.status !== 'open') {
             await respond(event, { status: 'rejected', reason: 'lobby_closed' }, mode);
@@ -442,6 +484,40 @@ export function createLobbyManager(options: LobbyManagerOptions): LobbyManager {
 
     get(identifier: string): ManagedLobby | undefined {
       return lobbies.get(identifier);
+    },
+
+    async kick(identifier, pubkey, kickOptions): Promise<void> {
+      const managed = lobbies.get(identifier);
+      if (!managed) return;
+
+      const players = managed.lobby.players.filter((p) => p.pubkey !== pubkey);
+      const removed = players.length !== managed.lobby.players.length;
+      const ban = kickOptions?.ban ?? true;
+      // Remembered even when they were not seated, so a host can shut out
+      // somebody who keeps knocking rather than only somebody already in.
+      const denied =
+        ban && !managed.denied?.includes(pubkey) ? [...(managed.denied ?? []), pubkey] : managed.denied;
+      if (!removed && denied === managed.denied) return;
+
+      managed.lobby = { ...managed.lobby, players };
+      managed.denied = denied;
+      // The same succession and close-if-empty rules a `leave` gets. Kicking
+      // the leader has to hand the lead on, or the lobby is one nobody can
+      // start; kicking the last player closes it, or it lingers in the list
+      // advertising a room with nobody in it.
+      settleDeparture(managed);
+      if (managed.lobby.status === 'closed') lobbies.delete(managed.lobby.lobbyId);
+      await options.onChange?.(managed);
+      await republish(managed);
+    },
+
+    async setCode(identifier, code): Promise<void> {
+      const managed = lobbies.get(identifier);
+      if (!managed) return;
+      managed.code = code;
+      // `onChange` but no `republish`: this is durable state that was never on
+      // a relay, so there is nothing published to correct.
+      await options.onChange?.(managed);
     },
 
     get all(): readonly ManagedLobby[] {

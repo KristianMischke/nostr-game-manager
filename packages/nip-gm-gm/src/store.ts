@@ -86,6 +86,14 @@ export interface StoredLobby {
    * file is as sensitive as a key file.
    */
   code?: string;
+  /**
+   * Players this lobby will not re-seat.
+   *
+   * Durable for the same reason the code is: a kick that a restart forgot would
+   * quietly re-open the door, and the person who was removed is exactly the one
+   * still retrying.
+   */
+  denied?: string[];
   gameId?: Hex;
 }
 

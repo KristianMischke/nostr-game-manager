@@ -124,6 +124,17 @@ export interface GM {
   readonly pubkey: Hex;
   /** Live games by id — for tests and for an operator's status endpoint. */
   readonly games: ReadonlyMap<Hex, GameRunner>;
+  /**
+   * The lobby manager, for the operator actions no player can send.
+   *
+   * Exposed because a GM embedded in a client has a person behind it — one who
+   * can see who joined and may want to remove them, or change a join code they
+   * have shared too widely. A daemon has no use for it and no UI to drive it
+   * from. Nothing here is a protocol message: the GM is the sole writer of
+   * lobby membership, so these are direct edits followed by the same republish
+   * every other membership change gets.
+   */
+  readonly lobbies: LobbyManager;
   /** Resolves once every message received so far has been fully handled. */
   drain(): Promise<void>;
 }
@@ -179,6 +190,7 @@ export function createGM(options: GMOptions): GM {
     salt: bytesToHex(managed.commitment.salt),
     commit: managed.commitment.commit,
     ...(managed.code === undefined ? {} : { code: managed.code }),
+    ...(managed.denied === undefined ? {} : { denied: managed.denied }),
     ...(managed.lobby.gameId === undefined ? {} : { gameId: managed.lobby.gameId }),
   });
 
@@ -193,6 +205,7 @@ export function createGM(options: GMOptions): GM {
     openedAt: stored.openedAt,
     module: stored.module,
     ...(stored.code === undefined ? {} : { code: stored.code }),
+    ...(stored.denied === undefined ? {} : { denied: stored.denied }),
   });
 
   /** The runner's durable safe points, forwarded to the store. See `store.ts`. */
@@ -560,6 +573,14 @@ export function createGM(options: GMOptions): GM {
 
     get games(): ReadonlyMap<Hex, GameRunner> {
       return runners;
+    },
+
+    get lobbies(): LobbyManager {
+      // Guarded like `pubkey`: the manager is built by `start()`, and reaching
+      // for it before then is a caller with its ordering wrong, not a caller
+      // that wants an empty one.
+      if (!lobbies) throw new Error('GM has not been started');
+      return lobbies;
     },
 
     /**
