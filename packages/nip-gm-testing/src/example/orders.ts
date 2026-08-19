@@ -111,7 +111,7 @@ function cloneState(state: OrdersState): OrdersState {
   };
 }
 
-export const ordersModule: GameModule<OrdersConfig, OrdersState, OrdersMove, OrdersPatch> = {
+export const ordersModule = {
   id: 'net.example.orders',
   version: '1.0.0',
 
@@ -299,7 +299,7 @@ export const ordersModule: GameModule<OrdersConfig, OrdersState, OrdersMove, Ord
   deserialize(raw) {
     return raw as OrdersState;
   },
-};
+} satisfies GameModule<OrdersConfig, OrdersState, OrdersMove, OrdersPatch>;
 
 function winners(state: OrdersState, alive: readonly Hex[]): Hex[] {
   if (alive.length <= 1) return [...alive];
