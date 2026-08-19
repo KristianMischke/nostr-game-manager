@@ -10,6 +10,9 @@ import NDK, { NDKRelaySet, type NDKEvent, type NDKFilter } from '@nostr-dev-kit/
 import type { Filter, NostrEvent, SubscribeHandlers, Subscription, Transport } from 'nip-gm-core';
 import { toNDKEvent, toNostrEvent } from './event.js';
 
+/** Default ceiling on the pool handshake. See {@link NdkTransportOptions.connectTimeoutMs}. */
+const DEFAULT_CONNECT_TIMEOUT_MS = 3_000;
+
 export interface NdkTransportOptions {
   /**
    * Relay URLs this transport reads and writes. NIP-GM §Relay Strategy makes
@@ -24,6 +27,20 @@ export interface NdkTransportOptions {
    * a peer dependency. Omit and one is constructed for the given relays.
    */
   ndk?: NDK;
+  /**
+   * How long the pool handshake is waited on before carrying on, in ms.
+   *
+   * Not a tuning knob — a guard. `NDKPool.connect(timeoutMs)` races "every
+   * relay reached CONNECTED" against a timeout that, when none is given, is
+   * `new Promise(() => {})`. So `ndk.connect()` with no argument never settles
+   * if a single relay in the pool is unreachable, and every `publish`,
+   * `subscribe` and `query` here awaits it. One dead relay in a user's list
+   * would silently take the whole transport down.
+   *
+   * Connection continues in the background regardless; this only bounds the
+   * wait. Pass `0` to wait forever, which is only ever right in a test.
+   */
+  connectTimeoutMs?: number;
 }
 
 export interface NdkTransport extends Transport {
@@ -50,11 +67,15 @@ export function createTransport(options: NdkTransportOptions): NdkTransport {
     return relaySet;
   };
 
+  const connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
+
   let connecting: Promise<void> | undefined;
   const connect = (): Promise<void> => {
-    connecting ??= ndk.connect().then(() => {
-      getRelaySet();
-    });
+    connecting ??= ndk
+      .connect(connectTimeoutMs === 0 ? undefined : connectTimeoutMs)
+      .then(() => {
+        getRelaySet();
+      });
     return connecting;
   };
 

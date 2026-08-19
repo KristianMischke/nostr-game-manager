@@ -10,6 +10,14 @@ import { KIND, gameKinds, type PersistenceMode } from '../kinds.js';
 import { formatAddress } from './tags.js';
 import type { AddressPointer, Filter, Hex } from '../types.js';
 
+/**
+ * How many lobbies {@link openLobbiesFilter} asks for by default.
+ *
+ * Generous: the events are small and a client collapses them to the newest per
+ * address anyway. It exists to stay under relay caps, not to page.
+ */
+const DEFAULT_LOBBY_LIMIT = 500;
+
 /** Everything belonging to one game: state events, and optionally raw moves. */
 export function gameFilter(
   gameId: Hex,
@@ -59,9 +67,27 @@ export function lobbyFilter(lobby: AddressPointer): Filter {
   return { kinds: [KIND.LOBBY], authors: [lobby.pubkey], '#d': [lobby.identifier] };
 }
 
-/** Open public lobbies for a game module, optionally from specific GMs. */
-export function openLobbiesFilter(game: string, gms?: Hex[]): Filter {
-  return { kinds: [KIND.LOBBY], '#game': [game], ...(gms ? { authors: gms } : {}) };
+/**
+ * Open lobbies, optionally from specific GMs.
+ *
+ * Note what is *not* asked for: the game module. A lobby carries it as
+ * `["game", ...]`, a multi-character tag, and relays index only single-letter
+ * ones — so a relay can match it against a live event in memory and cannot
+ * match it against the events it has stored. Filtering on it therefore yields a
+ * subscription that works until the client reloads and then silently returns
+ * nothing, which is worse than not filtering at all. Same reasoning as
+ * {@link discoveryFilter}, arrived at the hard way.
+ *
+ * Callers discriminate on the module after `parseLobby`, which they had to do
+ * anyway: an unindexed tag is not something a relay can be trusted to have
+ * applied even when it answers.
+ *
+ * `limit` because a GM never deletes a closed lobby — it rewrites it as
+ * `status: "closed"` and republishes — so its open lobbies compete with its
+ * whole history for a relay's default REQ cap.
+ */
+export function openLobbiesFilter(gms?: Hex[], limit = DEFAULT_LOBBY_LIMIT): Filter {
+  return { kinds: [KIND.LOBBY], limit, ...(gms ? { authors: gms } : {}) };
 }
 
 /** The head snapshot for a game. */
